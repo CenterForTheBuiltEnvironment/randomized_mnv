@@ -1,0 +1,1112 @@
+---
+title: "Novel Randomized M&V Examples"
+author:
+  - name: Aoyu Zou
+    email: aoyuzou@berkeley.edu
+    affiliation: CBE
+  - name: Paul Raftery
+    email: p.raftery@berkeley.edu
+    affiliation: CBE
+address:
+  - code: CBE
+    address: Center for the Built Environment, UC Berkeley, 390 Wurster Hall, Berkeley, CA, 94720, USA
+date: "`r Sys.Date()`"
+output:
+  #prettydoc::html_pretty:
+  bookdown::html_document2:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    number_sections: true
+    theme: paper
+    highlight: tango
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include = FALSE, cache = FALSE}
+
+# knitr setup
+knitr::opts_chunk$set(message = F,
+                      warning = F,
+                      dev = "jpeg",
+                      dpi = 300,
+                      fig.show = "hold",
+                      fig.pos = "b")
+
+# str(knitr::opts_chunk$get()) # see for all options
+```
+
+```{r theme, include=FALSE, message=FALSE}
+require(pacman)
+
+# load packages using pacman
+pacman::p_load(tidyverse, lubridate, here, rmarkdown,  
+               scales, patchwork, magrittr, janitor, qpcR, knitr, # general
+               ggpmisc, # linear regression
+               ggpubr,
+               sjstats, pwr, # anova results
+               nmecr, # m&v modeling package for TOWT
+               slider, # moving averages
+               sprtt, # sequential testing
+               base, blocksdesign, # blocking
+               rstatix, #pipe friendly stats
+               overlapping, # distribution overlapping percentage
+               effsize, bootES, dabestr) #effect size
+
+# turn off scientific notation
+options(scipen = 999, digits = 15)
+
+# set directory
+here::i_am("manuscript.rmd")
+
+# set default theme for ggplot
+theme_set(theme_minimal())
+
+# define base ggplot theme
+theme_update(plot.title = element_text(size = 14, colour = "grey20", face = "bold", hjust = 0.5),
+             plot.subtitle = element_text(size = 10, colour = "grey20", face = "italic", hjust = 0.5, margin = margin(b = 10)),
+             plot.caption = element_text(size = 10, colour = "grey20", face = "italic", hjust = 0.5),
+             plot.background = element_rect(fill = "white", colour = NA),
+             panel.grid.minor = element_blank(),
+             panel.grid.major = element_blank(),
+             axis.text = element_text(size = 10),
+             strip.text = element_text(size = 10, color = "grey20", face = "bold"),
+             strip.background = element_blank())
+
+# define global color theme (from palatte "Set2")
+ls_colours <- c("Baseline" = "#99d8c9", 
+                "True baseline" = "#99d8c9",
+                "Biased baseline" = "#1b9e77",
+                "Intervention" = "#fdbb84",
+                "True interv" = "#fdbb84")
+```
+
+# Objective
+
+The purpose of this document is to provide open-source coding examples
+for building analysts who has a strong interest in applying the novel
+measurement and verification (M&V) procedure described in the paper to
+their own projects or datasets. By following the guidance below, users
+should be able to:
+
+1.  Replicate the novel M&V method proposed in the manuscript:
+    -   Design a randomized and balanced switchback control
+        implementation schedule consisting of a baseline strategy and an
+        intervention strategy,
+    -   Conduct sequential analysis to infer intervention effect on
+        target metrics (e.g. energy consumption, carbon emissions,
+        thermal comfort).
+2.  Examine the reliability of the novel method and compare with
+    conventional M&V method under:
+    -   Scenario A: Missing measurements
+    -   Scenario B: Baseline change
+    -   Scenario C: Non-routine events
+
+This example code follows the flowchart depicted in the manuscript but
+only provides a minimum for demonstration purpose. The building analyst
+should always make reasonable adjustments to specific M&V cases such as
+using more sophisticated modeling techniques or enforcing more
+reasonable stopping criteria and thresholds.
+
+# M&V use case
+
+We apply the same use case described in the manuscript where a
+software-as-a-service control company offers a higher energy-efficient
+chiller control algorithm. A building analyst was hired to determine the
+amount of HVAC energy saving through this control intervention. The
+overall M&V protocol regarding sampling ratio, carryover effect,
+blocking design and stopping criteria remain the same as the manuscript.
+For the demonstration purpose, the M&V procedure here does not include
+an annual saving estimation normalized on a typical weather using fitted
+energy models. Instead, we use the average treatment effect (ATE) by
+calculating the mean difference between baseline measurements and
+intervention measurements as a proxy for intervention energy-saving
+effect and normalize on mean of the baseline measurements to obtain
+fractional savings.
+
+# Use case measurement dataset
+
+For this demonstration, we simply create a hypothetical baseline and
+intervention measurement set by considering a linear function including
+outdoor temperature ($temp$), peak and off-peak hour indicator
+($\delta_{peak}$, $\delta_{off-peak}$) as independent variables:
+
+$$
+Energy = \beta_0 + \beta_1*temp + \beta_2 * \delta_{peak} + \beta_3 * \delta_{off-peak} + \epsilon
+$$
+
+The $\epsilon$ term accounts for random noise sampled from a normal
+distribution $N(0, 10^2)$. The created measurement set for baseline and
+intervention controls are shown in figure \@ref(fig:plotdata). If the
+building analyst follows conventional M&V method described in ASHRAE
+Guideline 14 (G14) or the International Performance Measurement and
+Verification Protocol (IPMVP), then only baseline measurements are
+measurable/observable during the pre-retrofit period and only
+intervention measurements are measureable during the post-retrofit
+period. However, if the analyst applies the novel M&V we proposed in the
+manuscript, both data points from both measurement set can be sampled
+during both periods.
+
+```{r readfiles, message=FALSE, warning=FALSE}
+# Get case study example data
+readfile_path <- "../readfiles/"
+
+# Load defined functions
+function_path <- "../functions/"
+
+# load holidays
+list_holidays <- read_csv(paste0(readfile_path, "us_holidays_2022.csv"),
+                          col_names = c("date", "weekday", "holiday")) %>%
+  mutate(date = mdy(date))
+
+# load tmy weather file
+df_tmy <- read_csv(paste0(readfile_path, "USA_IL_Chicago.Midway.Intl.AP.725340_TMY3.epw"),
+                   skip = 8, col_types = "ddddd-d---------------------------------",
+                   col_names = c("year", "month", "day", "hour", "min", "tmy")) %>%
+  mutate(year = 2022,
+         time = ymd_h(paste(paste(year, month, day, sep = "-"), hour, sep = " ")),
+         temp = tmy) %>%
+  dplyr::select(time, temp)
+
+# load temperature from local weather station
+df_weather <- list.files(path = readfile_path, pattern = str_glue("weather_*"), full.name = TRUE) %>%
+  map_dfr(read_rds) %>%
+  mutate(datetime = with_tz(datetime_UTC, tz = "America/Chicago")) %>% 
+  select(c(datetime, t_out)) %>% 
+  mutate(across(t_out, ~ zoo::na.approx(., na.rm = FALSE))) %>%
+  filter(datetime >= as.Date("2021-01-01")) %>% 
+  filter(datetime < as.Date("2023-01-01")) %>% 
+  unique() %>% 
+  arrange(datetime)
+
+# Create a sequence of hourly timestamps for one year
+timestamps <- seq(from = as.POSIXct("2021-01-01 00:00:00"),
+                  to = as.POSIXct("2022-12-31 23:00:00"),
+                  by = "hour")
+
+# Define peak hours (e.g., 12 PM to 6 PM)
+peak_hours <- as.integer(format(timestamps, "%H") %in% c("12", "13", "14", "15", "16", "17"))
+
+# Calculate non-peak hours
+non_peak_hours <- 1 - peak_hours
+
+# Baseline model parameters
+intercept <- 45
+beta_peak <- 20
+beta_temp <- -0.2
+beta_non_peak <- 5
+
+# Compute the energy consumption
+energy_consumption <- intercept +
+                      beta_temp * df_weather$t_out +
+                      beta_peak * peak_hours +
+                      beta_non_peak * non_peak_hours +
+                      rnorm(length(timestamps), mean = 0, sd = sqrt(100))
+
+# Create a data frame
+df_base <- data.frame(datetime = timestamps,
+                      t_out = df_weather$t_out ,
+                      power = energy_consumption) 
+
+# Output the first few rows of the dataset
+head(df_base)
+
+# Intervention model parameters
+intercept <- 42
+beta_temp <- -0.8
+beta_peak <- 12
+beta_non_peak <- 10
+
+# Compute the energy consumption
+energy_consumption <- intercept +
+                      beta_temp * df_weather$t_out +
+                      beta_peak * peak_hours +
+                      beta_non_peak * non_peak_hours +
+                      rnorm(length(timestamps), mean = 0, sd = sqrt(100))
+
+# Create a data frame
+df_interv <- data.frame(datetime = timestamps,
+                        t_out = df_weather$t_out,
+                        power = energy_consumption)
+
+```
+
+```{r plotdata, fig.cap="Generated hypothetical baseline and intervention measurements using linear function (data points shows hourly energy consumption and line fitted using loess function)."}
+df_base %>% 
+  rename(Baseline = power, 
+         base_t_out = t_out) %>% 
+  left_join(df_interv %>% rename(Intervention = power), by = "datetime") %>% 
+  pivot_longer(-c(datetime, base_t_out, t_out), names_to = "parameter", values_to = "value") %>% 
+  ggplot(aes(x = datetime, y = value, color = parameter)) +
+  geom_point(size = 0.1, alpha = 0.1) +
+  geom_smooth() +
+  scale_x_datetime(date_breaks = "3 months",
+               date_labels = "%b")  +
+  scale_y_continuous(expand = c(0, 0), 
+                     labels = number_format(suffix = " kW")) +
+  scale_color_manual(values = ls_colours) +
+  labs(x = NULL, 
+       y = NULL,
+       color = NULL, 
+       title = "Created baseline and intervention energy consumption") +
+  geom_vline(aes(xintercept = median(datetime)), lty = "dashed") +
+  annotate(geom = "text", 
+           x = as.POSIXct("2021-06-01 00:00:00"), 
+           y = 75, 
+           label = "Pre-retrofit") +
+    annotate(geom = "text", 
+           x = as.POSIXct("2022-06-01 00:00:00"), 
+           y = 75, 
+           label = "Post-retrofit") +
+  theme(legend.direction = "horizontal",
+        legend.position = "bottom",
+        plot.margin = margin(t = 2, r = 7, b = 2, l = 2, unit = "mm"))
+```
+
+# Novel randomized M&V analysis
+
+## Switchback experimental design
+
+As most control intervention strategies can be implemented
+interchangeably with the building baseline control, we argue in the
+paper that randomize the implementation sequence between the
+intervention and the baseline can balance the impact of confounding
+variables when estimating intervention effect. A simple way to get
+started is using a built-in function '*sample()'* in R package *'base'*,
+which randomly select at each sampling interval which strategy to
+implement.
+
+```{r simple_schedule, include=TRUE, message=FALSE}
+# Define strategies and number of days
+strategies <- c("Base", "Interv_1", "Interv_2")
+num_weeks <- 15
+days_per_week <- 7
+total_days <- num_weeks * days_per_week
+
+# Randomly assign strategies to each day
+assigned_strategies <- sample(strategies, total_days, replace = TRUE)
+
+# Convert the linear structure into a weekly structure for easier interpretation
+weekly_assignment <- matrix(assigned_strategies, nrow = num_weeks, ncol = days_per_week)
+
+print(weekly_assignment[1, ])
+```
+
+In statistics, average treatment effect (ATE) estimation depends on the
+statistical power of unbiased randomization and balaned sample size.
+This means to accurately estimate the energy-saving effect of the
+intervention control strategy, we should design an unbiased
+randomization which has equal amount of measurements for each level of
+confounding variables. Therefore, a simple complete randomization might
+still be biased. For instance, an obvious drawback is the possibility of
+getting a bad randomization where a significant portion of the baseline
+are sampled in weekends. This can be avoided by designing a block
+randomization, which is a type of experimental design that first divide
+the testing units into blocks and then randomly assign which strategy to
+implement for each unit within each block. Each block type corresponds
+to one confounding variable, and since strategies are sampled at the
+block level, this means each confounding variable are covered by all
+testing strategies. For example, building energy consumption is known to
+be affected by various confounding variables such as occupancy, outdoor
+weather conditions. If the control service company wishes to bill the
+customer based on the savings solely from control retrofit itself, the
+M&V analyst should decompose the measured energy savings and block the
+impact from mild weather or reduced occupancy. As an example in the
+paper, we developed a block-in-block experiment, which is shown in
+figure \@ref(fig:blockdesign). We first blocked by season (i.e. 15
+weeks), and within each 15-week block, we further blocked by days of the
+week. In another word, within each seasonal block, we would have 15
+repetitions of Monday to Sunday as sub-blocks. And then we randomly
+assigned control testing strategies at each day of the week sub-block.
+By doing this, we can ensure that all testing control strategies are
+sampled on Mondays (and Tuesdays, ...) at each season.
+
+```{r blockdesign, fig.cap = "Illustration of block-in-block design that aims to balance day-of-week variable and seasonality", out.width = "100%"}
+
+knitr::include_graphics("../figs/example/block_illustration.png", dpi = 900)
+```
+
+To do block design, we referred to another built-in function in R called
+*'blocks()'* from *'blocksdesign'* package. We further binded other
+functions and inputs to make the package more versatile and one example
+is shown below. Once successfully called, the function will return a
+list consisting schedule output and schedule summaries. The detailed
+schedule can be viewed by calling the `schedule` key name.
+
+```{r block, include=TRUE, message=FALSE}
+source(paste0(function_path, "blocking.R")) # block design schedule generation function
+schedule <- blocking(start_date = "2021-01-01",
+                     n_weeks = 60, 
+                     n_seasons = 4, 
+                     seed = 390, 
+                     searches = 20, 
+                     jumps = 20, 
+                     treatments = 2, 
+                     consec = 1)
+
+kable(head(schedule$schedule, n = 7))
+```
+
+To check whether the blocking experimental design is balanced, we can
+call three built-in summary table outputs:
+
+1.  Weekday summary: calculates how many days are sampled for each
+    season weekday and strategy combination.
+2.  Consecutive days summary: calculates how many consecutive days are
+    sampled for each strategy
+
+## Sequential analysis of the intervention effect
+
+This section replicates the sequential analysis described in the
+manuscript using the newly created measurement dataset. The results are
+shown in figure \@ref(fig:sprtresults).
+
+```{r sprtdata}
+# source(paste0(function_path, "saving_pred.R")) # annual saving estimation function
+source(paste0(function_path, "ol_est.R")) # independent variable overlapping calculation
+
+# Combine random sampling
+df_schedule <- data.frame(strategy = schedule$schedule$strategy,
+                          datetime = schedule$schedule$date)
+df_base_sch <- df_base %>% 
+  left_join(df_schedule, by = "datetime") %>% 
+  fill(strategy, .direction = "down") %>% 
+  filter(strategy == 1)
+
+df_interv_sch <- df_interv %>% 
+  left_join(df_schedule, by = "datetime") %>% 
+  fill(strategy, .direction = "down") %>% 
+  filter(strategy == 2)
+
+df_hourly <- bind_rows(df_base_sch, df_interv_sch) %>% 
+  arrange(datetime)
+
+# make daily totals
+df_daily <- df_hourly %>%
+  group_by(datetime = floor_date(datetime, unit = "day")) %>%
+  summarise(strategy = unique(strategy),
+            power_ave = mean(power, na.rm = TRUE),
+            power_peak = max(power, na.rm = TRUE),
+            t_out = mean(t_out, na.rm = TRUE)) %>%
+  ungroup()
+```
+
+```{r, sprtrun}
+# prepare sequential test dataset
+sprt_hourly <- df_hourly %>%
+  mutate(week = interval(min(datetime), datetime) %>% as.numeric('weeks') %>% floor())
+
+# set analysis parameters
+param_sprt <- list(baseline = "Baseline",
+                   strategy = "Intervention",
+                   parameter = "power_ave", # choice: power_ave; mmoer; co2
+                   label = "power", # choice: power; emissions
+                   n_weeks = 60)
+
+# prepare dataframe for analysis
+df_sprt <- df_daily %>%
+  mutate(strategy = as.factor(strategy),
+         strategy = recode_factor(strategy, "1" = "Baseline", "2" = "Intervention")) %>%
+  filter(strategy %in% c(param_sprt$baseline, param_sprt$strategy)) %>%
+  pivot_longer(cols = -c(datetime, strategy), 
+               names_to = "parameter", 
+               values_to = "value") %>%
+  mutate(week = interval(min(datetime), datetime) %>% as.numeric('weeks') %>% floor(),
+         value = value) %>%
+  filter(str_detect(parameter, param_sprt$parameter)) %>%
+  droplevels()
+
+
+# define list to store weekly means
+df_means <- list()
+
+# calculate weekly means
+for (i in 1:param_sprt$n_weeks) {
+  
+  # subset data by week
+  df_means[[i]] <- df_sprt %>%
+    filter(week <= i) %>%
+    group_by(strategy, 
+             parameter) %>%
+    summarise(week = i,
+              value_ave = mean(value, na.rm = TRUE),
+              value_sd = sd(value, na.rm = TRUE), 
+              .groups = "keep") %>%
+    ungroup()
+
+}
+
+# combine list into df
+df_means <- bind_rows(df_means)
+
+# define lists to store stopping criteria results
+## SPRT results
+sprt_res <- list()
+
+## 80% independent variable
+overlap_base <- list()
+overlap_s2 <- list()
+quantile_tmy <- quantile(df_tmy$temp, na.rm = TRUE, c(0, 0.99))
+
+# do sample
+for (i in 2:param_sprt$n_weeks) {
+  
+  # subset data by week
+  df_seq <- df_sprt %>%
+    filter(week <= i) %>%
+    droplevels()
+  
+ # Calculate overlapping temperature range
+  overlap_base[[i]] <- tibble("n_weeks" = i, 
+                              overlap_base = sprt_hourly %>%
+                                filter(week <= i & strategy == 1) %>% 
+                                ol_est(., quantile_tmy))
+  
+  overlap_s2[[i]] <- tibble("n_weeks" = i, 
+                            overlap_s2 = sprt_hourly %>%
+                              filter(week <= i & strategy == 2) %>% 
+                              ol_est(., quantile_tmy))
+
+  
+  # do test
+  results_seq <- seq_ttest(x = value ~ strategy, 
+                           data = df_seq,
+                           d = 0.5, 
+                           power = 0.9, 
+                           alternative = "less", # greater
+                           paired = FALSE,
+                           verbose = TRUE)
+  
+  # calculate effect size
+  results_ci <- effsize::cohen.d(d = df_seq$value,
+                                 f = df_seq$strategy,
+                                 conf.level = 0.90,
+                                 paired = FALSE,
+                                 na.rm = TRUE)
+  
+  # update user
+  # print(paste0("Calculating effect size for week ", i))
+  
+  # bootstrap effect size
+  results_bs <- bootES::bootES(data = df_seq, R = 1000, 
+                               contrast = c(param_sprt$baseline, param_sprt$strategy),
+                               data.col = "value", group.col = "strategy")
+  
+  # extract test statistic
+  sprt_res[[i]] <- tibble("n_weeks" = i, 
+                          "threshold_lower" = exp(results_seq@B_boundary_log),
+                          "threshold_upper" = exp(results_seq@A_boundary_log),
+                          "statistic" = results_seq@likelihood_ratio,
+                          "decision" = results_seq@decision,
+                          "cohens_d" = round(results_ci$estimate, digits = 2),
+                          "ci_low" = round(results_ci$conf.int[[1]], digits = 2),
+                          "ci_high" = round(results_ci$conf.int[[2]], digits = 2),
+                          "ns_stat" = round(results_bs$t0, digits = 2),
+                          "ns_ci_low" = round(results_bs$bounds[[1]], digits = 2),
+                          "ns_ci_high" = round(results_bs$bounds[[2]], digits = 2))
+  
+  }    
+  
+# work out when threshold is reached
+sprt_res <- bind_rows(sprt_res)
+
+sprt_res <- sprt_res %>%
+  mutate(flag = ifelse(str_detect(decision, "accept"), 1, 0))
+
+sprt_overlap_base <- bind_rows(overlap_base) %>% 
+  mutate(flag = ifelse(overlap_base >= 0.8, 1, 0),
+         flag = ifelse(flag == lag(flag, 1), 0, flag))
+
+sprt_overlap_s2 <- bind_rows(overlap_s2) %>% 
+  mutate(flag = ifelse(overlap_s2 >= 0.8, 1, 0),
+         flag = ifelse(flag == lag(flag, 1), 0, flag))
+
+```
+
+```{r sprtresults, fig.height=8, fig.width=8, fig.cap="Comprehensive results summary of the proposed M&V method applied to the case study throughout a total of 60 weeks"}
+p2 <- ggplot(sprt_res, aes(x = n_weeks, y = ns_stat)) +
+  geom_ribbon(aes(ymin = ns_ci_low, ymax = ns_ci_high), alpha = 0.5, fill = "#D0E3F1") +
+  geom_line(size = 1.25, colour = "grey20", alpha = 0.4) +
+  geom_text(data = sprt_res[2, ], 
+            aes(x = n_weeks, y = ns_ci_high, label = "Upper 90% CI"),
+            position = position_nudge(x = 1), 
+            colour = "grey20", 
+            size = 2.5, 
+            fontface = "italic") +
+  geom_text(data = sprt_res[2, ], 
+            aes(x = n_weeks, y = ns_ci_low, label = "Lower 90% CI"),
+            position = position_nudge(x = 1), 
+            colour = "grey20", 
+            size = 2.5, 
+            fontface = "italic") +
+  geom_point(data = sprt_res %>% filter(n_weeks%%15 == 0), 
+             size = 8, 
+             shape = 16, 
+             colour = "#347EB3", 
+             alpha = 0.5) +
+  geom_point(data = sprt_res %>% filter(n_weeks%%15 == 0), 
+             size = 4, 
+             shape = 16, 
+             colour = "#347EB3", 
+             alpha = 0.9) +
+  geom_text(data = sprt_res %>% filter(n_weeks%%15 == 0), 
+            aes(x = n_weeks, y = ns_stat, label = paste0(round(ns_stat, 1L), " kW")), 
+            position = position_nudge(x = 2.5), 
+            colour = "grey20", 
+            size = 3.0, 
+            fontface = "italic") +
+  geom_errorbar(data = sprt_res %>% filter(n_weeks%%15 == 0), 
+                aes(x = n_weeks, ymin = ns_ci_low, ymax = ns_ci_high), 
+                width = 1, 
+                colour = "#347EB3", 
+                alpha = 0.5, 
+                size = 0.8) +
+  geom_text(data = sprt_res %>% filter(n_weeks%%15 == 0), 
+            aes(x = n_weeks, y = ns_ci_high, label = paste0(round(ns_ci_high, 1L), " kW")), 
+            position = position_nudge(x = 2.5), 
+            colour = "grey20", 
+            size = 2.5, 
+            fontface = "italic") +
+  geom_text(data = sprt_res %>% filter(n_weeks%%15 == 0), 
+            aes(x = n_weeks, y = ns_ci_low, label = paste0(round(ns_ci_low, 1L), " kW")), 
+            position = position_nudge(x = 2.5), 
+            colour = "grey20", 
+            size = 2.5, 
+            fontface = "italic") +
+  geom_text(data = sprt_res %>% filter(n_weeks%%15 == 0 & flag == 1),
+            aes(x = n_weeks, y = -15, label = "Difference\nfound"), 
+            colour = "grey20", 
+            size = 3.0, 
+            fontface = "italic") +
+  geom_text(data = slice_tail(sprt_res, n = 1), 
+            aes(x = n_weeks, y = ns_stat, label = paste0(round(ns_stat, 1L), " kW")), 
+            position = position_nudge(x = 0.5), 
+            colour = "grey20", 
+            size = 3.0, 
+            check_overlap = TRUE, 
+            hjust = 0) +
+  geom_text(data = slice_tail(sprt_res, n = 1), 
+            aes(x = ifelse(is.na(first(flag)), 0, n_weeks), 
+                y = ns_ci_high, 
+                label = ifelse(is.na(first(flag)), NULL, paste0(round(ns_ci_high, 1L), " kW"))), 
+            position = position_nudge(x = 0.5), 
+            colour = "grey20", 
+            size = 2.5, 
+            check_overlap = TRUE, 
+            hjust = 0) +
+  geom_text(data = slice_tail(sprt_res, n = 1), 
+            aes(x = ifelse(is.na(first(flag)), 0, n_weeks), 
+                y = ns_ci_low, 
+                label = ifelse(is.na(first(flag)), NULL, paste0(round(ns_ci_low, 1L), " kW"))), 
+            position = position_nudge(x = 0.5), 
+            colour = "grey20", 
+            size = 2.5, 
+            check_overlap = TRUE, 
+            hjust = 0) +
+  geom_vline(xintercept = seq(0, 50, by = 15), 
+             linetype = "dashed", 
+             color = "grey20", 
+             alpha = 0.3, 
+             size = 0.5) +
+  annotate(geom = "text", 
+           x = seq(5, 50, by = 15), 
+           y = 5, 
+           label = paste0("15-week block"), 
+           alpha = 0.5, 
+           size = 3) +
+  scale_x_continuous(expand = c(0, 0), 
+                     limits = c(1, param_sprt$n_weeks + 0.5),
+                     labels = number_format(accuracy = 1L, suffix = "\nweeks")) +
+  scale_y_continuous(expand = c(0, 0), 
+                     limits = c(-15, 2),
+                     breaks = pretty_breaks(n = 3),
+                     labels = number_format(suffix = " kW")) +
+  labs(title = NULL, 
+       subtitle = "SPRT results and estimated difference in power consumption without weather normalization",
+       x = NULL, 
+       y = NULL) +
+  guides(alpha = "none") +
+  coord_cartesian(clip = "off") +
+  theme(panel.grid.major.y = element_line(colour = "grey80", size = 0.25),
+        axis.text.x = element_blank(),
+        plot.margin = margin(3, 15, 3, 3, unit = "mm"))
+
+p4 <- ggplot(sprt_overlap_base) +
+  geom_line(aes(x = n_weeks, y = overlap_base, color = "Baseline"), 
+            size = 1.25) +
+  geom_line(data = sprt_overlap_s2, 
+            aes(x = n_weeks, y = overlap_s2, color = "Intervention"),
+            size = 1.25) +
+  geom_text(data = sprt_overlap_base[nrow(sprt_overlap_base), ],
+            aes(x = n_weeks, y = 0.8, label = "80% of\nTMY range\nthreshold"),
+            position = position_nudge(x = 0.5), 
+            color = "red", 
+            size = 3.0,
+            check_overlap = TRUE,
+            hjust = 0) +
+  geom_hline(yintercept = 0.8, linetype = "dashed", color = "red") +
+  scale_color_manual(values = ls_colours) +
+  scale_x_continuous(expand = c(0, 0), 
+                     limits = c(1, param_sprt$n_weeks + 0.5),
+                     labels = number_format(accuracy = 1L, suffix = "\nweeks")) +
+  scale_y_continuous(breaks = seq(0.2, 1.0, by = 0.2), 
+                     labels = c("20%", "40%", "60%", "80%", "100%")) +
+  labs(title = NULL, 
+       subtitle = "Confounding variable (outdoor drybulb temperature) range coverage",
+       x = NULL, 
+       y = NULL)  +
+  coord_cartesian(clip = "off") +
+  theme(panel.grid.major.y = element_line(),
+        legend.position = "none",
+        plot.margin = margin(3, 15, 3, 3, unit = "mm"))
+
+# do running mean plot
+p1 <- ggplot(df_means, aes(x = week, y = value_ave)) +
+  geom_line(aes(colour = strategy), size = 1.25) +
+  geom_text(data = filter(df_means, 
+                          week == param_sprt$n_weeks, 
+                          parameter == param_sprt$parameter), 
+            aes(x = param_sprt$n_weeks, 
+                y = value_ave, 
+                colour = strategy, 
+                label = strategy), 
+            position = position_nudge(x = 0.5), 
+            size = 3.0, 
+            check_overlap = TRUE, 
+            hjust = 0) +
+  scale_x_continuous(expand = c(0, 0), 
+                     limits = c(1, param_sprt$n_weeks + 0.5)) +
+  scale_y_continuous(expand = c(0, 0), 
+                     breaks = breaks_pretty(n = 4),
+                     labels = number_format(suffix = " kW")) +
+  scale_color_manual(values = ls_colours) +
+  labs(title = NULL, 
+       subtitle = "Running average power consumption of the case study building",
+       x = NULL, 
+       y = NULL) +
+  guides(alpha = "none", colour = "none") +
+  coord_cartesian(clip = "off") +
+  theme(panel.grid.major.y = element_line(colour = "grey80", size = 0.25),
+        axis.text.x = element_blank(),
+        plot.margin = margin(3, 15, 3, 3, unit = "mm"))
+
+
+# Overall result
+p1 / p2 / p4 +
+  plot_annotation(title = "Overall sequential evaluation results using pre-defined stopping criteria") +
+  plot_annotation(tag_levels = c('a'), tag_suffix = ')') &
+  theme(plot.tag.position = c(0, 1),
+        plot.tag = element_text(color="black"))
+```
+
+As figure \@ref(fig:sprtresults) indicates, the running average of power
+consumption shows more significant savings after the initial 10 weeks.
+This also corresponds to the SPRT results shown in the middle of the
+plot. The difference between baseline measurements and intervention
+measurements were detected early from week 15. However, since outdoor
+weather has not reached 80% threshold range of the typical weather, we
+need to continue the M&V. around week 25, the temperature variable
+covers 80% of its typical range and we report a 6 kW savings from the
+intervention control at the end of this blocking period (i.e. week 30).
+If this is a real project, and the building analyst follows the steps
+outlined in the standards, week 30 is around mid-point of baseline
+collection assuming no interruptions or delays. If the analyst applies
+the novel randomized M&V and the building owner or the control service
+company wishes to keep sampling to week 60, the etimated energy savings
+can be detected with a further decreased uncertainty range indicated by
+the bandwidth of blue ribbon in the SPRT plot.
+
+# Comparison between conventional M&V method
+
+In this section, we also demonstrate how randomly sampling between
+baseline and intervention strategy is more reliable in terms of
+interruptions. Those interruptions considered are only a subset of
+real-world issues but are representative and very likely to bias the
+conventional way of M&V.
+
+## Scenario A: Missing data due to network transmission failure
+
+In this scenario, we assume either the network system fails or the
+building manager needs to disable the HVAC system for major repair.
+Under both cases, we expect a large chunk of data missing from the
+measurement set. A conventional M&V outlined in G14 or IPMVP requires a
+12-month continuous measurements to cover the full range of all
+independent variables. If network transmission failure occurs during the
+cooling season, rendering measurements irrecoverable for two or three
+weeks, the baseline will need to be re-calibrated until the next cooling
+season in the following year. Furthermore, this delay will also postpone
+the implementation of the planned intervention leading to a much longer
+M&V timeline.
+
+In this scenario, we assume that there is a 1-month period of missing
+measurements in the base year. We will demonstrate how random sampling
+method can still provide accurate estimation without extension needed.
+Furthermore, as missing data occurs randomly in the real world, we will
+randomly choose a two-week period and re-shuffle for 100 trials and
+compare the mean estimated savings with the true savings. Since we
+created the measurement set at the beginning, we can determine what the
+true saving is, and by measuring the deviation between the two, we can
+assess how reliable this novel M&V is.
+
+```{r SA}
+# Define the number of hours in two weeks
+set.seed(1700)
+
+n_weeks <- 4
+hours <- n_weeks * 7 * 24
+
+# Define number of tests
+n_tests <- 100
+FS_new <- array(data = 0, dim = n_tests)
+
+df_hourly_sch <- df_hourly %>% filter(datetime < as.Date("2021-01-01") + weeks(60))
+df_base_sch <- df_base %>% filter(datetime < as.Date("2021-01-01") + weeks(60))
+df_interv_sch <- df_interv %>% filter(datetime < as.Date("2021-01-01") + weeks(60))
+
+for (i in 1:n_tests){
+  random_start <- sample(1:(8760 - hours), 1)
+
+  # Generate end index
+  random_end <- random_start + hours - 1
+  
+  df_hourly_shuff <- df_hourly_sch
+  
+  # Randomly erase energy consumption
+  df_hourly_shuff$power[random_start:random_end] <- NA
+  
+  FS_new[i] <- (mean(df_hourly_shuff %>% filter(strategy == 1) %>% .$power, na.rm = T) - mean(df_hourly_shuff %>% filter(strategy == 2) %>% .$power, na.rm = T)) / (mean(df_hourly_shuff %>% filter(strategy == 1) %>% .$power, na.rm = T)) * 100
+  
+}
+
+# True savings:
+FS_true <- (sum(df_base_sch %>% .$power, na.rm = T) - sum(df_interv_sch %>% .$power, na.rm = T)) / (sum(df_base_sch %>% .$power, na.rm = T)) * 100
+
+# Conventional method
+# FS_conv <- (sum(df_base_alt %>% .$power, na.rm = T) - sum(df_interv_alt %>% .$power, na.rm = T)) / (sum(df_base_alt %>% .$power, na.rm = T)) * 100
+
+
+FS_df <- data.frame(FS = FS_new)
+
+```
+
+```{r SAresults, fig.cap="Saving estimation comparison between true savings and the mean estimated savings after 100 trials with random 2-month data drop."}
+FS_df %>% 
+  ggplot(aes(x = FS)) +
+  geom_histogram(bins = 10, alpha = 0.5) +
+  scale_x_continuous(expand = c(0, 0), 
+                     labels = number_format(suffix = "%")) +
+  geom_vline(aes(xintercept = FS_true, color = "True savings"), lty = "dashed") +
+  geom_vline(aes(xintercept = mean(FS_new), color = "Mean estimated savings"), lty = "dashed") +
+  labs(color = NULL, 
+       title = "Repeated analysis of average intervention effect\n(with randomly selected missing days)",
+       x = "Estimated fractional savings",
+       y = "Frequency") +
+  theme(legend.direction = "horizontal",
+        legend.position = "bottom",
+        plot.margin = margin(t = 2, r = 7, b = 2, l = 2, unit = "mm"))
+```
+
+The above figure \@ref(fig:SAresults) shows that the deviation between
+the mean estimated saving and the true saving is less than 1%. Although
+the variance of the estimation is slightly larger, and this is because
+the intervention effect varies with the time of the year and so the
+saving estimation can be higher/lower comapred to the true savings
+depending on which period of time missing data occurs. But in general,
+the random sampling method is robust.
+
+## Scenario B: Changing baseline due to HVAC components malfunctioning
+
+Baseline changes due to outdoor weather or time of the week are easy to
+adjust as the analyst can measure and address them in an energy
+prediction model. Other changes such as related to mechanical
+sub-systems can be hard to detect and thus add bias to energy
+measurements when using conventional pre-/post- M&V method. One example
+is filter clogging in the AHU with increased fan power due to increased
+static pressure to overcome the increased resistance of air passing
+through the filter. In this scenario, if the building manger changes the
+air filter before starting the M&V and the analyst chooses to use the
+conventional pre-/post-type analysis, the energy measured 12 months
+later in the post-retrofit period should correspond to a higher baseline
+due to increased fan energy as the particle accumulates in the filter.
+Therefore the conventional M&V underestimates the intervention
+energy-saving effect. If the analyst chooses to use the novel random
+sampling M&V, the change in baseline can be documented in sampled
+baseline measurements.
+
+In this scenario, we simulate a situation where the fan power gradually
+increases due to accumulated particles in the inlet filter. We assume
+the fan power accounts for 25% of the HVAC electricity consumption and
+due to clogging, static pressure increases gradually by 0% to 100%. The
+relationship between fan power and static pressure can be roughly
+estimated as $P \sim\ Q^3*\Delta P$, which means the fan power would
+also increase by 0% to 100%. We will also demonstrate such increase is
+omitted by the conventional method in the post-retrofit period where
+only the control intervention is measured.
+
+```{r SB}
+# Generate schedule for the post-intervention period
+schedule <- blocking(start_date = "2022-01-01",
+                     n_weeks = 60, 
+                     n_seasons = 4, 
+                     seed = 390, 
+                     searches = 20, 
+                     jumps = 20, 
+                     treatments = 2, 
+                     consec = 1)
+
+df_schedule <- data.frame(strategy = schedule$schedule$strategy,
+                          datetime = schedule$schedule$date)
+
+
+df_base_sch <- df_base %>% 
+  filter(datetime >= as.Date("2022-01-01"))
+
+df_interv_sch <- df_interv %>% 
+  filter(datetime >= as.Date("2022-01-01"))
+```
+
+```{r SBdata, fig.cap="Simulated baseline and intervention energy under filter clogging scenario (Biased baseline indicates analyst's estimation without prior knowledge about the fan power increase since the conventional method has no measure of baseline in the post-retrofit period)."}
+gradi_week <- 1 / 60
+df_base_alt <- df_base_sch %>%
+  mutate(week = interval(min(datetime), datetime) %>% as.numeric('weeks') %>% floor()) %>%
+  mutate(ratio = gradi_week * week) %>%
+  mutate(delta_fan = power * 0.25 * ratio) %>%
+  mutate(power = power + delta_fan)
+
+df_interv_alt <- df_interv_sch %>%
+  mutate(week = interval(min(datetime), datetime) %>% as.numeric('weeks') %>% floor()) %>%
+  mutate(ratio = gradi_week * week) %>%
+  mutate(delta_fan = power * 0.25 * ratio) %>%
+  mutate(power = power + delta_fan)
+
+ggplot() +
+  geom_point(data = df_base_sch, aes(x = datetime, y = power, color = "Biased baseline"), size = 0.2, alpha = 0.1) +
+  geom_smooth(data = df_base_sch, aes(x = datetime, y = power, color = "Biased baseline")) +
+  geom_point(data = df_base_alt, aes(x = datetime, y = power, color = "True baseline"), size = 0.2, alpha = 0.1) +
+  geom_smooth(data = df_base_alt, aes(x = datetime, y = power, color = "True baseline")) +
+  geom_point(data = df_interv_alt, aes(x = datetime, y = power, color = "True interv"), size = 0.2, alpha = 0.1) +
+  geom_smooth(data = df_interv_alt, aes(x = datetime, y = power, color = "True interv")) +
+  scale_x_datetime(date_breaks = "2 months",
+               date_labels = "%b")  +
+  scale_y_continuous(expand = c(0, 0), 
+                     labels = number_format(suffix = " kW")) +
+  scale_color_manual(values = ls_colours) +
+  labs(x = NULL, 
+       y = NULL,
+       color = NULL, 
+       title = "Energy measurements in the post-retrofit period") +
+  theme(legend.direction = "horizontal",
+        legend.position = "bottom",
+        plot.margin = margin(t = 2, r = 7, b = 2, l = 2, unit = "mm"))
+
+```
+
+The above figure \@ref(fig:SBdata) shows all types of measurements in
+the post-retrofit period in this scenario. If the analyst follows the
+conventional method, he/she can measure the true intervention with
+increased fan energy. However, the analyst can only obtain the biased
+baseline without any knowledge or measure of how much fan energy has
+increased due to clogging filters. And the figure shows a significant
+amount of savings are under-estimated by the conventional method.
+
+```{r SBresults, fig.cap="Saving estimation comparison between true savings and the two methods (conventional M&V method: no prior knowledge of filter clogging and does not measure baseline,  and the novel randomized M&V method: no prior knowledge of filter clogging but measures updated baseline)."}
+# True M&V savings
+FS_true <- (mean(df_base_alt %>% .$power) - mean(df_interv_alt %>% .$power)) / (mean(df_base_alt %>% .$power)) * 100
+
+# Conventional M&V savings (biased)
+FS_conv <- (mean(df_base_sch %>% .$power) - mean(df_interv_alt %>% .$power)) / (mean(df_base_sch %>% .$power)) * 100
+
+# Noevl M&V savings 
+df_base_sch <- df_base %>% 
+  left_join(df_schedule, by = "datetime") %>% 
+  fill(strategy, .direction = "down") %>% 
+  filter(datetime >= as.Date("2022-01-01")) %>% 
+  filter(strategy == 1)
+
+df_interv_sch <- df_interv %>% 
+  left_join(df_schedule, by = "datetime") %>% 
+  fill(strategy, .direction = "down") %>% 
+  filter(datetime >= as.Date("2022-01-01")) %>% 
+  filter(strategy == 2)
+
+FS_new <- (mean(df_base_sch %>% .$power) - mean(df_interv_sch %>% .$power)) / (mean(df_base_sch %>% .$power)) * 100
+
+df_FS <- data.frame(
+  values = c(FS_true, FS_conv, FS_new),
+  category = factor(c("True", "Conventional M&V", "Randomized M&V"), levels = c("True", "Conventional M&V", "Randomized M&V"))
+)
+
+df_FS %>% 
+  ggplot() +
+  geom_col(aes(x = category, y = values), 
+           alpha = 0.6, 
+           position = "identity") +
+  geom_text(aes(x = category, y = values, label = paste0(round(values), "%")), 
+            position = position_nudge(y = -0.5),
+            size = 4) +
+  scale_y_continuous(expand = c(0, 0), 
+                     label = number_format(suffix = "%")) +
+  labs(title = "Fractional savings estimated from the intervention control", 
+       x = NULL, 
+       y = NULL) +
+  theme(legend.direction = "horizontal",
+        legend.position = "bottom",
+        plot.margin = margin(t = 2, r = 7, b = 2, l = 2, unit = "mm"))
+```
+
+The saving estimation shown in figure \@ref(fig:SBresults) implies that
+the conventional M&V significantly under-estimates the intervention
+energy-saving effect due to lack of measurements in the post-retrofit
+duration. We demonstrated that unless the analyst has prior knowledge
+about the filter condition and has sub-meters connected to the fan in
+the AHU, otherwise the only way to detect the baseline change is through
+random sampling. The figure shows only with half of the baseline
+measured (50%/50% sampling ratio used in the randomized M&V), the
+savings can be estimated much more accurately.
+
+## Scenario C: Influence due to non-routine events
+
+Apart from HVAC component malfunctioning, there is a variety of causes
+that can lead to baseline change. If those changes are not related to
+the baseline or the intervention control and the analyst has no way of
+excluding them, the estimation is very likely to be biased. We refer to
+those unrelated interruptions as non-routine events such as new seminars
+scheduled in a school building after the M&V starts or temporary
+conferences and meetings in an office building. Those non-routine events
+can attract a higher occupancy and results in higher energy demand due
+to more air movement and cooling/heating required. The conventional M&V
+specifies that energy savings are estimated using projected baseline in
+the post-retrofit period and its difference between measured
+intervention. Therefore, if the analyst fails to consider those data
+points as outliers, energy modeling results can bias the intervention
+saving estimation.
+
+As non-routine events are random in nature, in this scenario we attempt
+to investigate how reliable the novel randomized M&V method is by adding
+random perturbations to the measurement set. Specifically, we will
+randomize:
+
+1.  Number of events (from 1 to 10);
+2.  Duration of the event (from 1 hr to 4 hrs);
+3.  Demand increase (from 20% to 400%);
+4.  Starting time of each event.
+
+And since those non-routine events are unrelated to the control
+strategies, we assume the amount of energy increase is the same for the
+baseline and the intervention. We then repeat for 100 trials to examine
+how much estimation results deviate from the true savings. As we created
+the measurement set, we can determine what the true savings are.
+
+```{r, SC}
+# Novel M&V method
+schedule <- blocking(start_date = "2021-01-01",
+                     n_weeks = 60, 
+                     n_seasons = 4, 
+                     seed = 390, 
+                     searches = 20, 
+                     jumps = 20, 
+                     treatments = 2, 
+                     consec = 1)
+
+df_schedule <- data.frame(strategy = schedule$schedule$strategy,
+                          datetime = schedule$schedule$date)
+
+df_base_sch <- df_base %>% 
+  filter(datetime < as.Date("2022-01-01"))
+
+df_interv_sch <- df_interv %>% 
+  filter(datetime < as.Date("2022-01-01"))
+
+# Number of hours to select
+
+n_tests <- 100
+FS_new <- array(data = 0, dim = n_tests)
+
+for (n in 1:n_tests){
+  
+  num_periods <- round(runif(1, min = 1, max = 10))
+  hours_in_period <- round(runif(1, min = 1, max = 4))
+  
+  random_starts <- sample(1:(8760 - hours_in_period + 1), num_periods)
+  random_ends <- random_starts + hours_in_period - 1
+  
+  df_base_shuff <- df_base_sch
+  df_interv_shuff <- df_interv_sch
+  
+  for (i in 1:length(random_starts)){
+  
+    rate <- runif(1, min = 1.2, max = 4)
+    
+    df_base_shuff$power[random_starts[i]:random_ends[i]] <- df_base_shuff$power[random_starts[i]:random_ends[i]] * rate
+  
+    df_interv_shuff$power[random_starts[i]:random_ends[i]] <- df_interv_shuff$power[random_starts[i]:random_ends[i]] * rate
+    
+  }
+  
+  df_base_alt <- df_base_shuff %>% 
+    left_join(df_schedule, by = "datetime") %>% 
+    fill(strategy, .direction = "down") %>% 
+    filter(strategy == 1)
+  
+  df_interv_alt <- df_interv_shuff %>% 
+    left_join(df_schedule, by = "datetime") %>% 
+    fill(strategy, .direction = "down") %>% 
+    filter(strategy == 2)
+  
+  df_hourly_shuff <- bind_rows(df_base_alt, df_interv_alt) %>% 
+    arrange(datetime)
+  
+  
+  FS_new[n] <- (mean(df_hourly_shuff %>% filter(strategy == 1) %>% .$power) - mean(df_hourly_shuff %>% filter(strategy == 2) %>% .$power)) / (mean(df_hourly_shuff %>% filter(strategy == 1) %>% .$power)) * 100
+}
+
+FS_true <- (mean(df_base_shuff %>% .$power) - mean(df_interv_shuff %>% .$power)) / (mean(df_base_shuff %>% .$power)) * 100
+
+df_FS <- data.frame(FS = FS_new)
+
+```
+
+```{r SCresults, fig.cap="Saving estimation comparison between true savings and the mean estimated savings after 100 trials with random non-routine events."}
+df_FS %>% 
+  ggplot() +
+  geom_histogram(aes(x = FS)) +
+  geom_vline(aes(xintercept = mean(FS_new), color = "Mean estimated savings"), lty = "dashed") +
+  geom_vline(aes(xintercept = FS_true, color = "True savings"), lty = "dashed") +
+  scale_x_continuous(expand = c(0, 0), 
+                     labels = number_format(suffix = "%")) +
+  labs(color = NULL, 
+       title = "Repeated analysis of average intervention effect\n(with random non-routine events)",
+       x = "Estimated fractional savings",
+       y = "Frequency") +
+  theme(legend.direction = "horizontal",
+        legend.position = "bottom",
+        plot.margin = margin(t = 2, r = 7, b = 2, l = 2, unit = "mm"))
+```
+
+The above figure \@ref(fig:SCresults) shows the histogram of estimated
+savings. The variance in the estimation is due to the randonmess of the
+non-routine events. But the figure shows that the difference between the
+true savings and the mean estimated savings are around 1 \~ 2%
+indicating highly reliable results.
+
+# Conclusion
+
+This demonstration code replicates the novel M&V method described in the
+manuscript on a hypothetical case study example where we artificially
+created the baseline and intervention datasets. As a result, the novel
+M&V method that randomizes which control strategy to be implemented each
+day again uses much less time to obtain an answer compared to the
+conventional M&V method required by G14 and IPMVP. We then conducted
+three reliability assessments of the saving estimation given by the
+novel method and compared with the conventional method. All three
+scenarios are chosen to be representative to the real-world situations
+that an M&V analyst would encounter, which includes missing a period of
+measurement data, a gradual change of baseline energy consumption and
+disturbances from non-routine events. We addressed those issues by
+adding random noises or artificial effects to the created measurement
+set and calculated the deviation between the estimated savings and the
+true savings. In all scenarios, we observed that the novel method has
+very little variation in the intervention saving estimation and
+approximates very accurately around the true savings.
