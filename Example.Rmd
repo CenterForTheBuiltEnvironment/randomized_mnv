@@ -23,6 +23,12 @@ output:
 editor_options: 
   markdown: 
     wrap: 72
+knit: (function(input, ...) {
+    rmarkdown::render(
+      input,
+      output_dir = "./docs"
+    )
+  })
 ---
 
 ```{r setup, include = FALSE, cache = FALSE}
@@ -33,6 +39,7 @@ knitr::opts_chunk$set(message = F,
                       dev = "jpeg",
                       dpi = 300,
                       fig.show = "hold",
+                      fig.path = "figs/",
                       fig.pos = "b")
 
 # str(knitr::opts_chunk$get()) # see for all options
@@ -738,11 +745,12 @@ after 12 months. If those changes are not related to the control
 strategy, the savings estimation can be unreliable even if the modeling
 accuracy satisfies the minimum requirements from the standards. We
 simulated a change in building occupancy as a typical non-routine event
-in scenario A as a case study to illustrate the limitation of the
-conventional method. We then added other random interruptions/noises to
-the measurement set in scenarios B and C to further emphasize the better
-reliability of the novel M&V method. Those interruptions considered are
-only a subset of real-world issues but are representative.
+in scenario A as a simple case study to illustrate the limitation of the
+conventional method. Scenario B and C contain more complex designed
+simulations by adding other random interruptions/noises to the
+measurement set to further emphasize the better reliability of the novel
+M&V method. Those interruptions considered are only a subset of
+real-world issues but are representative.
 
 ## Scenario A: Discrete non-routine events
 
