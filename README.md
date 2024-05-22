@@ -17,7 +17,8 @@ Analysts typically estimate the performance impact of a change, or intervention,
 
 ## Structure ##
 This repository includes: 
+* Example.rmd: replicated r code analysis
 * [readfiles](readfiles/): all input files
 * [functions](functions/): defined functions for the analysis
-* [docs](docs/): output documents (manuscript and example)
+* [docs](docs/): output documents of the example
 * [figs](figs/): generated figures for visualization
