@@ -1,9 +1,9 @@
 library(tidyverse)
 library(lubridate)
 library(dplyr)
-source("../functions/model_pred.R")
-source("../functions/resample.R")
-source("../functions/find_occ_unocc.R")
+source("./functions/model_pred.R")
+source("./functions/resample.R")
+source("./functions/find_occ_unocc.R")
 
 saving_pred <- function(dataframe, carryover_check = FALSE, baseline_results = NULL){
   
@@ -19,7 +19,7 @@ saving_pred <- function(dataframe, carryover_check = FALSE, baseline_results = N
   #' @return A numerical percentage as annual fraction saving
 
   # load weather file  
-  weather <- read_csv("../readfiles/USA_IL_Chicago.Midway.Intl.AP.725340_TMY3.epw",
+  weather <- read_csv("./readfiles/USA_IL_Chicago.Midway.Intl.AP.725340_TMY3.epw",
                                 skip = 8, col_types = "ddddd-d---------------------------------",
                                 col_names = c("year", "month", "day", "hour", "min", "tmy")) %>%
     mutate(year = 2022,
@@ -30,7 +30,7 @@ saving_pred <- function(dataframe, carryover_check = FALSE, baseline_results = N
     dplyr::select(time, temp, eload)
 
   # load holidays
-  list_holidays <- read_csv("../readfiles/us_holidays_2022.csv",
+  list_holidays <- read_csv("./readfiles/us_holidays_2022.csv",
                             col_names = c("date", "weekday", "holiday")) %>%
     mutate(date = mdy(date))
   
