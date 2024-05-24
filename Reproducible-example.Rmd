@@ -35,7 +35,7 @@ knit: (function(input, ...) {
 
 # knitr setup
 knitr::opts_chunk$set(message = F,
-                      # cache = T,
+                      cache = F,
                       echo = F,
                       warning = F,
                       dev = "jpeg",
@@ -407,7 +407,7 @@ df_daily <- df_hourly %>%
   ungroup()
 ```
 
-```{r, sprtrun, cache=TRUE}
+```{r, sprtrun, cache=F}
 # prepare sequential test dataset
 sprt_hourly <- df_hourly %>%
   mutate(week = interval(min(datetime), datetime) %>% as.numeric('weeks') %>% floor())
