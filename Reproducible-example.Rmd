@@ -99,7 +99,7 @@ pacman::p_load(tidyverse, lubridate, here, rmarkdown,
 options(scipen = 999, digits = 15)
 
 # set directory
-here::i_am("Example.rmd")
+here::i_am("Reproducible-example.rmd")
 
 # set default theme for ggplot
 theme_set(theme_minimal())
@@ -190,8 +190,7 @@ df_tmy <- read_csv(paste0(readfile_path, "USA_IL_Chicago.Midway.Intl.AP.725340_T
   dplyr::select(time, temp)
 
 # load temperature from local weather station
-df_weather <- list.files(path = readfile_path, pattern = str_glue("weather_*"), full.name = TRUE) %>%
-  map_dfr(read_rds) %>%
+df_weather <- read_csv(paste0(readfile_path, "weather.csv")) %>%
   mutate(datetime = with_tz(datetime_UTC, tz = "America/Chicago")) %>% 
   select(c(datetime, t_out)) %>% 
   mutate(across(t_out, ~ zoo::na.approx(., na.rm = FALSE))) %>%
@@ -687,7 +686,7 @@ p2 <- ggplot(sprt_res, aes(x = n_weeks, y = ns_stat)) +
             size = 2.5, 
             fontface = "italic") +
   geom_text(data = sprt_res %>% filter(n_weeks%%12 == 0 & flag == 1),
-            aes(x = n_weeks, y = -15, label = "Difference\nfound"), 
+            aes(x = n_weeks, y = -16, label = "Difference\nfound"), 
             colour = "grey20", 
             size = 3.0, 
             fontface = "italic") +
@@ -731,7 +730,7 @@ p2 <- ggplot(sprt_res, aes(x = n_weeks, y = ns_stat)) +
                      limits = c(1, param_sprt$n_weeks + 0.5),
                      labels = number_format(accuracy = 1L, suffix = "\nweeks")) +
   scale_y_continuous(expand = c(0, 0), 
-                     limits = c(-15, 0),
+                     limits = c(-16, 0),
                      breaks = pretty_breaks(n = 3),
                      labels = number_format(suffix = " kW")) +
   labs(title = NULL, 
@@ -819,8 +818,8 @@ p3 <- ggplot(annual_saving) +
              shape = 16, 
              colour = "#347EB3") +
   geom_text(data = annual_saving[1, ], 
-            aes(x = n_weeks, 
-                y = annual_saving - 2, 
+            aes(x = n_weeks - 3, 
+                y = annual_saving, 
                 label = paste0("Estimation start\nweek ", n_weeks)), 
             colour = "grey20", size = 2.5, fontface = "italic") +
   geom_point(data = sprt_res %>% filter(flag == 1), 
@@ -841,7 +840,10 @@ p3 <- ggplot(annual_saving) +
             aes(x = ifelse(is.null(first(flag)), max(sprt_overlap_base$n_weeks), n_weeks), 
                 y = ifelse(is.null(first(flag)), max(sprt_overlap_base$annual_saving), annual_saving) - 3, 
                 label = paste0("Temperature check\n(Baseline)\nweek ", n_weeks)), 
-            colour = "grey20", size = 2.5, fontface = "italic") +
+            colour = "grey20", 
+            size = 2.5, 
+            fontface = "italic",
+            check_overlap = TRUE) +
   geom_point(data = sprt_overlap_s2 %>% filter(flag == 1), 
              aes(x = ifelse(is.null(first(flag)), max(sprt_overlap_s2$n_weeks), n_weeks), 
                  y = ifelse(is.null(first(flag)), max(sprt_overlap_s2$annual_saving), annual_saving)), 
@@ -850,7 +852,7 @@ p3 <- ggplot(annual_saving) +
              shape = 16, 
              colour = "#347EB3") +
   geom_text(data = sprt_overlap_s2 %>% filter(flag == 1), 
-            aes(x = ifelse(is.null(first(flag)), max(sprt_overlap_s2$n_weeks), n_weeks) + 1, 
+            aes(x = ifelse(is.null(first(flag)), max(sprt_overlap_s2$n_weeks), n_weeks), 
                 y = ifelse(is.null(first(flag)), max(sprt_overlap_s2$annual_saving), annual_saving) + 3, 
                 label = paste0("Temperature check\n(Intervention)\nweek ", n_weeks)), 
             colour = "grey20", size = 2.5, fontface = "italic") +
@@ -861,7 +863,7 @@ p3 <- ggplot(annual_saving) +
              shape = 16, 
              colour = "#347EB3") +
   geom_text(data = annual_saving %>% filter(n_weeks == 12),
-            aes(x = n_weeks, y = annual_saving + 3,label = paste0("Minimum\ntest length check\nweek ", n_weeks)),
+            aes(x = n_weeks, y = annual_saving + 4,label = paste0("Minimum\ntest length check\nweek ", n_weeks)),
             colour = "grey20", 
             size = 2.5, 
             fontface = "italic")+
@@ -877,7 +879,7 @@ p3 <- ggplot(annual_saving) +
             size = 2.5, 
             fontface = "italic")+
   geom_text(data = sprt_res %>% filter(n_weeks%%12 == 0 & flag == 1) %>% slice(1),
-            aes(x = n_weeks, y = annual_saving - 2, label = paste0("SPRT check\nweek ", n_weeks)), 
+            aes(x = n_weeks, y = annual_saving - 4, label = paste0("SPRT check\nweek ", n_weeks)), 
             colour = "grey20", 
             size = 2.5, 
             fontface = "italic") +
@@ -888,7 +890,7 @@ p3 <- ggplot(annual_saving) +
              size = 0.5) +
   annotate(geom = "text", 
            x = seq(5, 50, by = 12), 
-           y = 25, 
+           y = 24, 
            label = paste0("12-week block"), 
            alpha = 0.5, 
            size = 3) +
@@ -904,7 +906,7 @@ p3 <- ggplot(annual_saving) +
                      limits = c(1, param_sprt$n_weeks + 0.5),
                      labels = number_format(accuracy = 1L, suffix = "\nweeks")) +
   scale_y_continuous(breaks = seq(0, 25, by = 5), 
-                     limits = c(12, 25),
+                     limits = c(10, 24),
                      labels = c("0%", "5%", "10%", "15%", "20%", "25%")) +
   scale_color_manual(values = ls_colours) +
   coord_cartesian(clip = "off") +
@@ -941,7 +943,7 @@ need to continue the M&V process in order to be able to normalize to a
 full range of weather conditions. At week 16, the accumulated
 temperature measured in sampled baseline days covered 80% range and at
 week 24, sampled intervention days satisfied the criterion. Therefore,
-we report a 9 kW savings at the end of this blocking period (i.e. week
+we report a 10 kW savings at the end of this blocking period (i.e. week
 24). If the analyst decides to continue sampling, the plot further shows
 the uncertainty associated with saving estimation further decreased
 throughout the remaining 24 weeks. Subplot d) plots the sequentially
@@ -950,7 +952,7 @@ the check-point for satisfying each critical stopping criterion. It
 shows although the saving was detected early by the statistical test at
 week 12, the normalized annual estimation still largely fluctuates at
 the point. After covered sufficient weather conditions, the annualized
-savings stabilize at 17% which corresponds to the true TMY normalized
+savings stabilize at 18% which corresponds to the true TMY normalized
 savings as shown in subplot d).
 
 Considering now the scenario where the analyst had applied conventional
