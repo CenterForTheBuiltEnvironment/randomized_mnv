@@ -36,6 +36,7 @@ knit: (function(input, ...) {
 # knitr setup
 knitr::opts_chunk$set(message = F,
                       # cache = T,
+                      echo = F,
                       warning = F,
                       dev = "jpeg",
                       dpi = 300,
@@ -120,7 +121,9 @@ ls_colours <- c("Baseline" = "#99d8c9",
                 "Adjusted baseline" = "#99d8c9",
                 "Projected baseline\n(no change)" = "#1b9e77",
                 "Intervention" = "#fdbb84",
-                "Measured interv" = "#fdbb84")
+                "Measured interv" = "#fdbb84", 
+                "True savings" = "black", 
+                "True normalized savings" = "black")
 
 # Get case study example data
 readfile_path <- "./readfiles/"
@@ -133,39 +136,41 @@ function_path <- "./functions/"
 
 We apply the same use case described in the manuscript where a
 software-as-a-service control company offers a more efficient chiller
-control algorithm. Here, the analyst aims the determine the amount of
+control algorithm. Here, the analyst aims to determine the amount of
 HVAC energy saved by this control intervention. The overall M&V protocol
 regarding sampling ratio, carryover effect, blocking design and stopping
-criteria remain the same as the manuscript. For demonstration purposes,
-the M&V procedure here does not include an annual saving estimation
-normalized on typical weather using fitted energy models. Instead, we
-use the average treatment effect (ATE) by calculating the mean
-difference between baseline measurements and intervention measurements
-to estimate the energy-saved by the control algorithm (and normalize
-using the mean of the baseline measurements to obtain fractional
-savings).
+criteria remain the same as the manuscript. To replicate the analysis,
+we also fitted a time-of-week and temperature model and normalized the
+savings on a typical meterological weather file. Additionally for
+demonstration clarity, when comparing the novel randomized method with
+the conventional method, we used the average treatment effect (ATE) by
+calculating the mean difference between baseline measurements and
+intervention measurements to estimate the energy-saved by the control
+algorithm (and normalize using the mean of the baseline measurements to
+obtain fractional savings).
 
 # Use case measurement dataset
 
 For this demonstration, we simply create a hypothetical baseline and
-intervention measurement set by considering a linear function including
-outdoor temperature ($temp$), peak and off-peak hour indicator
+intervention measurement set by considering using a linear function
+including outdoor temperature ($temp$), peak and off-peak hour indicator
 ($\delta_{peak}$, $\delta_{off-peak}$) as independent variables:
 
 $$
 Energy = \beta_0 + \beta_1*temp + \beta_2 * \delta_{peak} + \beta_3 * \delta_{off-peak} + \epsilon
 $$
 
-The $\epsilon$ term accounts for random noise sampled from a normal
-distribution $N(0, 10^2)$. The created measurement set for baseline and
-intervention controls is shown in figure \@ref(fig:plotdata). If the
-analyst follows the conventional M&V method described in ASHRAE
-Guideline 14 (G14) or the International Performance Measurement and
-Verification Protocol (IPMVP), then only baseline measurements are
-measurable/observable during the pre-retrofit period and only
-intervention measurements are measurable during the post-retrofit
-period. In other words, the control strategy switches between baseline
-and intervention one time in the entire study period.
+We apply that to two years of measured weather data. The $\epsilon$ term
+accounts for random noise sampled from a normal distribution
+$N(0, 10^2)$. The created measurement set for baseline and intervention
+controls is shown in figure \@ref(fig:plotdata). If the analyst follows
+the conventional M&V method described in ASHRAE Guideline 14 (G14) or
+the International Performance Measurement and Verification Protocol
+(IPMVP), then only baseline measurements are measurable/observable
+during the pre-retrofit period and only intervention measurements are
+measurable during the post-retrofit period. In other words, the control
+strategy switches between baseline and intervention one time in the
+entire study period.
 
 ```{r readfiles, message=FALSE, warning=FALSE}
 
@@ -224,11 +229,11 @@ df_base <- data.frame(datetime = timestamps,
                       power = energy_consumption) 
 
 # Output the first few rows of the dataset
-head(df_base)
+kable(head(df_base))
 
 # Intervention model parameters
-intercept <- 40
-beta_temp <- 0.5
+intercept <- 38
+beta_temp <- 0.4
 beta_peak <- 12
 beta_non_peak <- 10
 
@@ -246,7 +251,7 @@ df_interv <- data.frame(datetime = timestamps,
 
 ```
 
-```{r plotdata, fig.cap="Generated hypothetical baseline and intervention measurements using a linear function (data points show hourly energy consumption and line fitted using the loess function)."}
+```{r plotdata, fig.cap="Generated hypothetical baseline and intervention measurements across the whole study period using a linear function (data points show hourly energy consumption and line fitted using the loess function)."}
 df_base %>% 
   rename(Baseline = power, 
          base_t_out = t_out) %>% 
@@ -284,12 +289,15 @@ variables when estimating the intervention effect, find a result faster,
 and be more robust to the occurrence of changes in performance that are
 unrelated to the intervention. A simple way to get started is using a
 built-in function '*sample()'* in R package *'base'* to randomly select
-at each sampling interval which strategy to implement.
+at each sampling interval which strategy to implement. The advantage of
+this function is easy to implement for a short test run (e.g. 1 week) on
+a single unit. But it is not recommended for more complicated tests, and
+we will address the limitations below.
 
 ```{r simple_schedule, include=TRUE, message=FALSE}
 # Define strategies and number of days
 strategies <- c("Base", "Intervention")
-num_weeks <- 12
+num_weeks <- 4
 days_per_week <- 7
 total_days <- num_weeks * days_per_week
 
@@ -299,7 +307,7 @@ assigned_strategies <- sample(strategies, total_days, replace = TRUE)
 # Convert the linear structure into a weekly structure for easier interpretation
 weekly_assignment <- matrix(assigned_strategies, nrow = num_weeks, ncol = days_per_week)
 
-print(weekly_assignment[1, ])
+# print(weekly_assignment[1, ])
 ```
 
 In statistics, average treatment effect (ATE) estimation depends on the
@@ -308,7 +316,7 @@ This means to accurately estimate the energy-saving effect of the
 intervention control strategy, we should design an unbiased
 randomization that has an equal amount of measurements for each level of
 confounding variables. Therefore, a simple complete randomization can
-still be biased, for instance, getting a poor randomization where a the
+still be biased, for instance, getting a poor randomization where the
 baseline, by chance, is sampled more often on weekends and vice versa.
 This can be avoided by designing a block randomization, which is a type
 of experimental design that first divides the testing units into blocks
@@ -321,16 +329,15 @@ affected by occupancy, time, and outdoor weather conditions. If the
 control service company wishes to bill the customer based on the savings
 solely from the control retrofit itself, the M&V analyst should
 decompose the measured energy savings and adjust for the influence from
-mild weather or decreased occupancy. For the example in this document,
-we assume just two strategies are being tested, over a blocking period
-of 12 weeks.
+differences in weather. For example in this document, we assume two
+strategies are being compared over a blocking period of 12 weeks.
 
-To do block design, we usde a function in R called *'blocks()'* from the
-*'blocksdesign'* package. We further bonded other functions and inputs
-to make the package more versatile and one example is shown below. Once
-successfully called, the function will return a list consisting of
-schedule output and schedule summaries. The detailed schedule can be
-viewed by calling the `schedule` key name.
+To do block design, we use a function in R called *\'blocks()\'* from
+the *\'blocksdesign\'* package. We further bonded other functions and
+inputs to make the package more versatile and one example is shown
+below. Once successfully called, the function will return a list
+consisting of schedule output and schedule summaries. The detailed
+schedule can be viewed by calling the `schedule` key name.
 
 ```{r block, include=TRUE, message=FALSE}
 source(paste0(function_path, "blocking.R")) # block design schedule generation function
@@ -375,6 +382,7 @@ source(paste0(function_path, "saving_pred.R")) # annual saving estimation functi
 # Combine random sampling
 df_schedule <- data.frame(strategy = schedule$schedule$strategy,
                           datetime = schedule$schedule$date)
+
 df_base_sch <- df_base %>% 
   left_join(df_schedule, by = "datetime") %>% 
   fill(strategy, .direction = "down") %>% 
@@ -548,65 +556,88 @@ sprt_overlap_s2 <- bind_rows(overlap_s2) %>%
 
 ```
 
-```{r conventionalsaving}
-# Baseline prediction
-# Specifying model input information
-model_input_options <- nmecr::assign_model_inputs(regression_type = "TOWT", occupancy_threshold = 0.65)
+```{r truesaving}
+df_week <- df_base %>% 
+  select(datetime, 
+         base_power = power) %>% 
+  left_join(df_interv, by = "datetime") %>% 
+  mutate(savings = power - base_power) %>% 
+  mutate(week = interval(min(datetime), datetime) %>% as.numeric('weeks') %>% floor()) %>% 
+  filter(week <= 48)
 
-baseline_train <- df_base %>%
-  filter(datetime < as.Date("2022-01-01")) %>% 
-  rename(time = datetime, 
-         eload = power, 
-         temp = t_out)
+true_saving <- list()
 
-# do baseline model to estimate occupancy
-towt_base <- nmecr::model_with_TOWT(training_data = baseline_train,
-                                    model_input_options = model_input_options)
+for (i in 2:48){
+  saving <- df_week %>% 
+    filter(week <= i)
+  
+  true_saving[[i]] <- tibble("n_weeks" = i, 
+                             savings = mean(saving %>% .$saving))
+}
 
-# Add occupancy info to model specification
-base_model_input_options <- map(model_input_options, ~.) %>% 
-  append(list(find_occ_unocc(training_data = baseline_train, model_input_options = towt_base$model_input_options))) %>% 
-  set_names(., c(names(model_input_options), "occupancy_info"))
+true_saving <- bind_rows(true_saving)
 
-# re-estimate baseline with occupancy
-towt_base <- nmecr::model_with_TOWT(training_data = baseline_train,
-                                    model_input_options = base_model_input_options)
-df_towt <- df_weather %>% 
-  filter(datetime >= as.Date("2022-01-01")) %>% 
-  rename(time = datetime, 
-         temp = t_out) %>% 
-  mutate(eload = NA)
+# Create a sequence of hourly timestamps for one year
+timestamps <- seq(from = as.POSIXct("2022-01-01 01:00:00"),
+                  to = as.POSIXct("2023-01-01 00:00:00"),
+                  by = "hour")
 
-baseline_results <- model_pred(amod = towt_base$model_occupied, 
-                               bmod = towt_base$model_unoccupied,
-                               time = df_towt$time, 
-                               temp = df_towt$temp,
-                               temp_knots = towt_base$model_input_options$calculated_temp_knots, 
-                               dataframe = df_towt,
-                               occ_info = towt_base$model_input_options$occupancy_info,
-                               interval_minutes = towt_base$model_input_options$interval_minutes) %>%
-  rename("datetime" = "time") %>% 
-  mutate("datetime" = force_tz(datetime, tzone = "America/Chicago"))
+# Define peak hours (e.g., 12 PM to 6 PM)
+peak_hours <- as.integer(format(timestamps, "%H") %in% c("12", "13", "14", "15", "16", "17"))
 
-conv_saving <- baseline_results %>% 
-  left_join(df_interv %>% filter(datetime >= as.Date("2022-01-01")), by = "datetime") %>% 
-  mutate(saving = power - towt) %>% 
-  mutate(n_weeks = interval(min(datetime), datetime) %>% as.numeric('weeks') %>% floor()) %>%
-  filter(n_weeks <= 48)
+# Calculate non-peak hours
+non_peak_hours <- 1 - peak_hours
+
+# Baseline model parameters
+intercept <- 45
+beta_peak <- 20
+beta_temp <- 0.9
+beta_non_peak <- 5
+
+# Compute the energy consumption
+energy_consumption <- intercept +
+                      beta_temp * df_tmy$temp +
+                      beta_peak * peak_hours +
+                      beta_non_peak * non_peak_hours
+
+# Create a data frame
+df_base_tmy <- data.frame(datetime = timestamps,
+                      t_out = df_tmy$temp,
+                      power = energy_consumption) 
+
+# Intervention model parameters
+intercept <- 38
+beta_temp <- 0.4
+beta_peak <- 12
+beta_non_peak <- 10
+
+# Compute the energy consumption
+energy_consumption <- intercept +
+                      beta_temp * df_tmy$temp +
+                      beta_peak * peak_hours +
+                      beta_non_peak * non_peak_hours
+
+# Create a data frame
+df_interv_tmy <- data.frame(datetime = timestamps,
+                        t_out = df_tmy$temp,
+                        power = energy_consumption)
+
+df_hourly_tmy <- df_base_tmy %>%
+  select(datetime,
+         base_power = power) %>% 
+  left_join(df_interv_tmy, by = "datetime")
+
+tmy_saving <- (mean(df_hourly_tmy %>% .$base_power) - 
+               mean(df_hourly_tmy %>% .$power)) /
+               mean(df_hourly_tmy %>% .$base_power)
 ```
 
-```{r sprtresults, fig.height=10, fig.width=7.5, fig.cap="Comprehensive results summary of the proposed M&V method applied to the case study throughout a total of 60 weeks"}
+```{r sprtresults, fig.height=10, fig.width=7.5, fig.cap="Comprehensive results summary of the proposed M&V method applied to the case study throughout a total of 48 weeks"}
 p2 <- ggplot(sprt_res, aes(x = n_weeks, y = ns_stat)) +
   geom_ribbon(aes(ymin = ns_ci_low, ymax = ns_ci_high), alpha = 0.5, fill = "#D0E3F1") +
   geom_line(size = 1.25, colour = "grey20", alpha = 0.4) +
-  geom_hline(yintercept = mean(conv_saving %>% .$saving, na.rm = T), 
-             linetype = "dashed", 
-             color = "black") +
-  annotate(geom = "text",
-           x = 5,
-           y = -11, 
-           size = 3,
-           label = "conventional method\nestimation\n(2 years)") +
+  geom_line(data = true_saving, aes(x = n_weeks, y = savings, color = "True savings"), 
+             linetype = "dashed") +
   geom_text(data = sprt_res[2, ], 
             aes(x = n_weeks, y = ns_ci_high, label = "Upper 90% CI"),
             position = position_nudge(x = 1), 
@@ -690,7 +721,7 @@ p2 <- ggplot(sprt_res, aes(x = n_weeks, y = ns_stat)) +
              size = 0.5) +
   annotate(geom = "text", 
            x = seq(5, 50, by = 12), 
-           y = 2.5, 
+           y = 0, 
            label = paste0("12-week block"), 
            alpha = 0.5, 
            size = 3) +
@@ -698,16 +729,19 @@ p2 <- ggplot(sprt_res, aes(x = n_weeks, y = ns_stat)) +
                      limits = c(1, param_sprt$n_weeks + 0.5),
                      labels = number_format(accuracy = 1L, suffix = "\nweeks")) +
   scale_y_continuous(expand = c(0, 0), 
-                     limits = c(-15, 2.5),
+                     limits = c(-15, 0),
                      breaks = pretty_breaks(n = 3),
                      labels = number_format(suffix = " kW")) +
   labs(title = NULL, 
        subtitle = "SPRT results and estimated difference in power consumption without weather normalization",
        x = NULL, 
-       y = NULL) +
+       y = NULL, 
+       color = NULL) +
+  scale_color_manual(values = ls_colours) +
   guides(alpha = "none") +
   coord_cartesian(clip = "off") +
   theme(panel.grid.major.y = element_line(colour = "grey80", size = 0.25),
+        legend.position = "bottom",
         axis.text.x = element_blank(),
         plot.margin = margin(3, 15, 3, 3, unit = "mm"))
 
@@ -737,6 +771,7 @@ p4 <- ggplot(sprt_overlap_base) +
        y = NULL)  +
   coord_cartesian(clip = "off") +
   theme(panel.grid.major.y = element_line(),
+        axis.text.x = element_blank(),
         legend.position = "none",
         plot.margin = margin(3, 15, 3, 3, unit = "mm"))
 
@@ -773,6 +808,8 @@ p1 <- ggplot(df_means, aes(x = week, y = value_ave)) +
 p3 <- ggplot(annual_saving) +
   geom_line(aes(x = n_weeks, y = annual_saving), 
             size = 1.25, color="darkgrey") +
+  geom_hline(aes(yintercept = tmy_saving * 100, color = "True normalized savings"), 
+             linetype = "dashed") +
   geom_point(data = annual_saving[1, ], 
              aes(x = n_weeks, y = annual_saving), 
              size = 4,
@@ -780,8 +817,8 @@ p3 <- ggplot(annual_saving) +
              shape = 16, 
              colour = "#347EB3") +
   geom_text(data = annual_saving[1, ], 
-            aes(x = n_weeks - 3, 
-                y = annual_saving, 
+            aes(x = n_weeks, 
+                y = annual_saving - 2, 
                 label = paste0("Estimation start\nweek ", n_weeks)), 
             colour = "grey20", size = 2.5, fontface = "italic") +
   geom_point(data = sprt_res %>% filter(flag == 1), 
@@ -800,7 +837,7 @@ p3 <- ggplot(annual_saving) +
              colour = "#347EB3") +
   geom_text(data = sprt_overlap_base %>% filter(flag == 1), 
             aes(x = ifelse(is.null(first(flag)), max(sprt_overlap_base$n_weeks), n_weeks), 
-                y = ifelse(is.null(first(flag)), max(sprt_overlap_base$annual_saving), annual_saving) + 4, 
+                y = ifelse(is.null(first(flag)), max(sprt_overlap_base$annual_saving), annual_saving) - 3, 
                 label = paste0("Temperature check\n(Baseline)\nweek ", n_weeks)), 
             colour = "grey20", size = 2.5, fontface = "italic") +
   geom_point(data = sprt_overlap_s2 %>% filter(flag == 1), 
@@ -811,8 +848,8 @@ p3 <- ggplot(annual_saving) +
              shape = 16, 
              colour = "#347EB3") +
   geom_text(data = sprt_overlap_s2 %>% filter(flag == 1), 
-            aes(x = ifelse(is.null(first(flag)), max(sprt_overlap_s2$n_weeks), n_weeks), 
-                y = ifelse(is.null(first(flag)), max(sprt_overlap_s2$annual_saving), annual_saving) - 2, 
+            aes(x = ifelse(is.null(first(flag)), max(sprt_overlap_s2$n_weeks), n_weeks) + 1, 
+                y = ifelse(is.null(first(flag)), max(sprt_overlap_s2$annual_saving), annual_saving) + 3, 
                 label = paste0("Temperature check\n(Intervention)\nweek ", n_weeks)), 
             colour = "grey20", size = 2.5, fontface = "italic") +
   geom_point(data = annual_saving %>% filter(n_weeks == 12), 
@@ -833,7 +870,7 @@ p3 <- ggplot(annual_saving) +
              shape = 16, 
              colour = "#347EB3") +
   geom_text(data = annual_saving %>% filter(n_weeks == 24),
-            aes(x = n_weeks, y = annual_saving + 3, label = paste0("End of block period\nall stopping criteria met\nweek ", n_weeks)),
+            aes(x = n_weeks, y = annual_saving - 3, label = paste0("End of block period\nall stopping criteria met\nweek ", n_weeks)),
             colour = "grey20", 
             size = 2.5, 
             fontface = "italic")+
@@ -848,11 +885,11 @@ p3 <- ggplot(annual_saving) +
              alpha = 0.3, 
              size = 0.5) +
   annotate(geom = "text", 
-           x = seq(3, 50, by = 12), 
-           y = 22, 
+           x = seq(5, 50, by = 12), 
+           y = 25, 
            label = paste0("12-week block"), 
            alpha = 0.5, 
-           size = 2.5) +
+           size = 3) +
    geom_text(data = annual_saving[nrow(annual_saving), ], 
             aes(x = n_weeks, y = annual_saving, label = paste0(round(annual_saving, 0), "%")), 
             position = position_nudge(x = 0.5), 
@@ -861,16 +898,21 @@ p3 <- ggplot(annual_saving) +
             check_overlap = TRUE, 
             hjust = 0) +
   scale_x_continuous(expand = c(0, 0), 
+                     breaks = seq(0, 48, by = 12), 
                      limits = c(1, param_sprt$n_weeks + 0.5),
                      labels = number_format(accuracy = 1L, suffix = "\nweeks")) +
-  scale_y_continuous(breaks = seq(0, 20, by = 5), 
-                     labels = c("0%", "5%", "10%", "15%", "20%")) +
+  scale_y_continuous(breaks = seq(0, 25, by = 5), 
+                     limits = c(12, 25),
+                     labels = c("0%", "5%", "10%", "15%", "20%", "25%")) +
+  scale_color_manual(values = ls_colours) +
+  coord_cartesian(clip = "off") +
   labs(title = NULL, 
        subtitle = "Normalized annual energy savings estimate using TOWT model predictions for a typical meteorological year",
        x = NULL, 
-       y = NULL)  +
-  coord_cartesian(clip = "off") +
+       y = NULL, 
+       color = NULL)  +
   theme(panel.grid.major.y = element_line(),
+        legend.position = "bottom",
         plot.margin = margin(3, 15, 3, 3, unit = "mm"))
 
 # Overall result
@@ -885,42 +927,45 @@ As figure \@ref(fig:sprtresults) indicates, the running average of power
 consumption in subplot a) shows more savings from the intervention
 strategy during warmer outdoor weather in general. This also corresponds
 to the sequential probability ratio test (SPRT) results shown in subplot
-b). The difference between baseline measurements and intervention
-measurements was detected early in week 12. However, subplot c)
-indicates that outdoor weather has not reached the 80% threshold range
-calculated with reference to the typical meteorological year (TMY)
-weather file, we need to continue the M&V. At week 16, the accumulated
-temperature measured in sampled baseline days covered 80% range and at
-week 24, sampled intervention days satisfied the criterion. Therefore,
-we report a 6.6 kW savings at the end of this blocking period (i.e. week
-24). If the analyst decides to continue sampling, the plot further shows
-the uncertainty associated with saving estimation further decreased
+b). The energy savings as the difference between baseline measurements
+and intervention measurements were estimated over actual weather
+encountered during the study. Subplot b) also shows a minimal detectable
+saving was observed early in week 12. However, subplot c) indicates that
+outdoor weather has not reached the 80% threshold range calculated with
+reference to the typical meteorological year (TMY) weather file, we need
+to continue the M&V. At week 16, the accumulated temperature measured in
+sampled baseline days covered 80% range and at week 24, sampled
+intervention days satisfied the criterion. Therefore, we report a 9 kW
+savings at the end of this blocking period (i.e. week 24). If the
+analyst decides to continue sampling, the plot further shows the
+uncertainty associated with saving estimation further decreased
 throughout the remaining 24 weeks. Subplot d) plots the sequentially
 estimated normalized savings on the TMY weather conditions and outlines
 the check-point for satisfying each critical stopping criterion. It
 shows although the saving was detected early by the statistical test at
 week 12, the normalized annual estimation still largely fluctuates at
 the point. After covered sufficient weather conditions, the annualized
-savings stabilize at 12%. If this is a real project, and the analyst
+savings stabilize at 17%. If this is a real project, and the analyst
 follows the steps outlined in the standards, week 24 is merely the
 mid-point of baseline collection assuming no interruptions or delays and
-he/she has to wait for another one year and half to estimate savings.
-Subplot b) also shows the saving estimated from a conventional 2-year
-pre-/post- type M&V, which is similar to the results obtained at week 24
-and onward if the analyst applies the novel randomized M&V.
+he/she has to wait for another one year and half to estimate savings. In
+addition, we also plotted the true savings obtained from the created
+measurement set over time in subplot b) and normalized true savings on
+the same TMY file in subplot d). The two plotted reference lines
+validate that our M&V estimation accurately follows the intervention
+effect.
 
-# Comparison between conventional M&V method
+# Comparison to conventional M&V method
 
-In this section, we demonstrate how random sampling between baseline and
-intervention strategy is more reliable than the conventional M&V method.
-Building performance frequently changes in response to changes in how
-the building is occupied or operated. The changes - those that are
-unrelated to the intervention being evaluated - cause the savings
-estimate to be less accurate, even if the modeling accuracy satisfies
-the minimum requirements from the standards. Sampling randomly, and
-frequently, throughout the entire distribution reduces the impact of
-these events on the reliability of the savings estimate. We highlight
-this by exploring three different scenarios.
+Considering now the scenario where the analyst had applied conventional
+M&V following ASHRAE Guideline 14 or IPMVP, it would take 2 years to
+reach the same result. Even if the analyst performed traditional M&V
+using a 6 month baseline and 6 month intervention period (1 year
+total), the result would be less accurate and still take longer than the
+method proposed above. Attempting to perform traditional M&V using just
+24 weeks would yield nonsensical data as the baseline and intervention
+periods would span very different weather data ranges. Yet this
+randomized M&V method was able to achieve this.
 
 ## Scenario A: A discrete non-routine event
 
@@ -954,7 +999,7 @@ the intervention's true effect. Under conventional M&V, either the
 baseline or the intervention estimate will be affected by this
 difference in occupancy.
 
-To illustrate one example of this scenario, we model a simplified
+To illustrate one example of this scenario, we modeled a simplified
 situation where the 12-month baseline occurs under stable occupancy, and
 after the retrofit implementation, the energy consumption decreased by
 10 kW for each metered interval from April to September because of
@@ -1007,6 +1052,12 @@ baseline_train <- base_pre %>%
   select(time = datetime, 
          eload = power, 
          temp = t_out)
+
+df_towt <- df_weather %>% 
+  filter(datetime >= as.Date("2022-01-01")) %>% 
+  rename(time = datetime, 
+         temp = t_out) %>% 
+  mutate(eload = NA)
 
 # do baseline model to estimate occupancy
 towt_base <- nmecr::model_with_TOWT(training_data = baseline_train,
@@ -1109,35 +1160,27 @@ p1 + p2 +
         plot.tag = element_text(color="black"))
 ```
 
-Figure \@ref(fig:SAplot) shows that If the analyst follows the steps
+Figure \@ref(fig:SAplot) shows that if the analyst follows the steps
 described in G14 and IPMVP, they would start baseline measurements 12
 months prior to the control retrofit implementation (subplot a) and fit
-an outdoor weather and time-dependent regression model using collected
-metered data as the baseline. In other words, the model is only valid
-for stable occupancy. Then the building manager enables the intervention
-control in the Building Automation System (BAS) and configures the
-existing baseline control as a backup when the intervention fails for
-safekeeping. Subplot b) in the figure \@ref(fig:SAplot) shows what
-happens after implementing the intervention, there is a 10 kW decrease
-at every metered interval due to a lower occupancy in the case study
-building. In the post-retrofit period, only intervention can be
-measured. The projected baseline is the baseline model prediction
-results using date/time features and outdoor weather conditions
-representing the analyst's estimation in the post-retrofit period. The
-correctly adjusted baseline represents the underlying ground truth of
-this scenario but unobervable to the analyst, and the figure shows from
-April to September, the modeled/predicted baseline deviates from the
-correctly adjusted baseline results.
+an outdoor weather and time-dependent regression model using the
+collected metered data as the baseline. In other words, the model is
+only valid for stable occupancy. Then, during the intervention period,
+an unexpected change in occupancy occurs, which makes the baseline model
+no longer representative, but without a reasonable means of adjusting
+it. Here, traditional M&V would overestimate the savings by the
+intervention.
 
-As a comparison, if the analyst follows the steps of the novel
-randomized M&V described in the manuscript, they would configure both
-control strategies in the BAS and switch back and forth between them
-depending on a pre-determined schedule. Figure \@ref(fig:SArand) shows
-even if the analyst start the M&V during the occupancy change and has no
-prior knowledge about when and how long the occupancy has changed, there
-is a decent chance that each control strategy sampled 3 months with a
-balanced day-of-week category. In this way, at least the non-routine
-event has been measured.
+Instead, if the analyst follows the steps of the novel randomized M&V
+described in the manuscript, they would configure both control
+strategies in the BAS and switch back and forth between them depending
+on a pre-determined, randomly selected schedule. Figure
+\@ref(fig:SArand) shows that even if the M&V test period spans the
+period during which occupancy changes, and the analyst has no prior
+knowledge about when and how long the occupancy has changed,  this
+method will still find a reasonable estimate of the true effect of the
+intervention. This is because it is randomly and frequently sampling
+over the full distribution of occupancy experienced by the building.
 
 ```{r SArand, fig.cap="Averaged energy measurements at sampling interval (daily) using novel M&V method", fig.width=8, fig.height=4}
 # make daily totals
@@ -1174,31 +1217,21 @@ df_daily %>%
         axis.text = element_text(size = 12))
 ```
 
-The results shown in figure \@ref(fig:SAresults) demonstrate that the
-conventional pre-/post- method is likely to provide a higher saving
-estimation for this scenario if the analyst can not adjust for the
-proposed change, but the novel randomized method is robust and requires
-no additional assumptions or modeling effort. This is because sampling
-random at a 50%/50% ratio, the unexpected disturbance can mostly be
-balanced when using difference-in-mean as a saving-effec estimator.
-
 ```{r SAresults, fig.cap="Comparison of savings estimation between conventional method and novel method proposed in the paper.", fig.height=4, fig.width=8}
 
 # saving calculation
-FS_true <- (mean(df_base_alt %>% .$power) - 
-            mean(df_interv_alt %>% .$power)) / 
-           (mean(df_base_alt %>% .$power)) * 100
 
-FS_new <- (mean(df_hourly_sch %>% filter(strategy == 1) %>% .$power) - 
-           mean(df_hourly_sch %>% filter(strategy == 2) %>% .$power)) / 
-          (mean(df_hourly_sch %>% filter(strategy == 1) %>% .$power)) * 100
+true <- (mean(df_base_alt %>% .$power) - 
+         mean(df_interv_alt %>% .$power))
 
-FS_conv <- (mean(baseline_results %>% .$towt) - 
-            mean(df_interv_alt %>% .$power)) / 
-           (mean(baseline_results %>% .$towt)) * 100
+new <- (mean(df_hourly_sch %>% filter(strategy == 1) %>% .$power) - 
+        mean(df_hourly_sch %>% filter(strategy == 2) %>% .$power))
+
+conv <- (mean(baseline_results %>% .$towt) - 
+         mean(df_interv_alt %>% .$power))
 
 df_FS <- data.frame(
-  values = c(FS_true, FS_conv, FS_new),
+  values = c(true, conv, new),
   category = factor(c("True", "Conventional M&V", "Randomized M&V"), 
                     levels = c("True", "Conventional M&V", "Randomized M&V"))
 )
@@ -1208,16 +1241,16 @@ df_FS %>%
   geom_col(aes(x = category, y = values), 
            alpha = 0.6, 
            position = "identity") +
-  geom_text(aes(x = category, y = values, label = paste0(round(values, digits = 1), "%")), 
+  geom_text(aes(x = category, y = values, label = paste0(round(values, digits = 0), " kW")), 
             position = position_nudge(y = -0.5),
             size = 4) +
   scale_y_continuous(expand = c(0, 0), 
-                     label = number_format(suffix = "%")) +
-  labs(title = "Estimated fractional savings\nby different methods", 
+                     breaks = breaks_pretty(n = 3),
+                     label = number_format(suffix = "kW")) +
+  labs(title = "Estimated savings by different methods", 
        x = NULL, 
        y = NULL) +
-  theme(legend.direction = "horizontal",
-        legend.position = "bottom",
+  theme(panel.grid.major.y = element_line(colour = "grey80", linewidth = 0.25),
         plot.margin = margin(t = 2, r = 7, b = 2, l = 2, unit = "mm"))
 ```
 
@@ -1233,18 +1266,18 @@ analysis, the energy measured 12 months later in the post-retrofit
 period should correspond to a higher baseline due to increased fan
 energy as the particle accumulates in the filter. Here, the conventional
 M&V method will underestimate the intervention energy-saving effect. If
-the analyst chooses to use the novel random sampling M&V, the change in
-baseline can be documented in sampled baseline measurements.
+the analyst chooses to use the novel random sampling M&V, the results
+will be far more robust to this issue.
 
 In this scenario, we simulated a situation where the fan power gradually
 increased due to accumulated particles in the filter. We assume the fan
 power accounts for 25% of the HVAC electricity consumption and due to
-clogging, static pressure increases gradually by 50% over the course of
-the study period. The relationship between fan power and static pressure
-can be roughly estimated as $P \sim\ Q^3*\Delta P$, which means the fan
-power would also increase from 100% to 150%. We demonstrate such
-increase is omitted by the conventional method in the post-retrofit
-period where only the control intervention is measured.
+clogging, system static pressure increases gradually by 50% over the
+course of the 2 year study period. The relationship between fan power
+and static pressure can be roughly estimated as $P \sim\ Q^3*\Delta P$,
+which means the fan power would also increase from 100% to 150%. We
+demonstrate such increase is omitted by the conventional method in the
+post-retrofit period where only the control intervention is measured.
 
 ```{r SB}
 # Generate schedule for the post-intervention period
@@ -1468,23 +1501,20 @@ estimated much more accurately.
 
 ```{r SBresults, fig.cap="Saving estimation comparison between true savings and the two methods (conventional M&V method: no prior knowledge of filter clogging and does not measure baseline,  and the novel randomized M&V method: no prior knowledge of filter clogging but measures updated baseline).", fig.height=4, fig.width=8}
 # True M&V savings
-FS_true <- (mean(df_base_alt %>% .$power) - 
-            mean(df_interv_alt %>% .$power)) / 
-           (mean(df_base_alt %>% .$power)) * 100
+true <- (mean(df_base_alt %>% .$power) - 
+         mean(df_interv_alt %>% .$power))
 
 # Conventional M&V savings (biased)
-FS_conv <- (mean(baseline_results %>% .$towt) - 
-            mean(df_interv_alt %>% filter(datetime >= as.Date("2022-01-01")) %>% .$power)) /
-           (mean(baseline_results %>% .$towt)) * 100
+conv <- (mean(baseline_results %>% .$towt) - 
+         mean(df_interv_alt %>% filter(datetime >= as.Date("2022-01-01")) %>% .$power))
 
 # Noevl M&V savings 
 
-FS_new <- (mean(df_hourly_alt %>% filter(strategy == 1) %>% .$power) - 
-           mean(df_hourly_alt %>% filter(strategy == 2) %>% .$power)) / 
-          (mean(df_hourly_alt %>% filter(strategy == 1) %>% .$power)) * 100
+new <- (mean(df_hourly_alt %>% filter(strategy == 1) %>% .$power) - 
+        mean(df_hourly_alt %>% filter(strategy == 2) %>% .$power))
 
 df_FS <- data.frame(
-  values = c(FS_true, FS_conv, FS_new),
+  values = c(true, conv, new),
   category = factor(c("True", "Conventional M&V", "Randomized M&V"), 
                     levels = c("True", "Conventional M&V", "Randomized M&V"))
 )
@@ -1494,15 +1524,15 @@ df_FS %>%
   geom_col(aes(x = category, y = values), 
            alpha = 0.6, 
            position = "identity") +
-  geom_text(aes(x = category, y = values, label = paste0(round(values, digits = 1), "%")), 
+  geom_text(aes(x = category, y = values, label = paste0(round(values, digits = 0), " kW")), 
             position = position_nudge(y = -0.5),
             size = 4) +
   scale_y_continuous(expand = c(0, 0), 
-                     label = number_format(suffix = "%")) +
-  labs(title = "Estimated fractional savings\nby different methods", 
+                     breaks = breaks_pretty(n = 3),
+                     label = number_format(suffix = " kW")) +
+  labs(title = "Estimated savings by different methods", 
        x = NULL, 
        y = NULL) +
-  theme(legend.direction = "horizontal",
-        legend.position = "bottom",
+  theme(panel.grid.major.y = element_line(colour = "grey80", linewidth = 0.25),
         plot.margin = margin(t = 2, r = 7, b = 2, l = 2, unit = "mm"))
 ```
