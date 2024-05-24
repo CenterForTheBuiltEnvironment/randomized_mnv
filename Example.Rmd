@@ -68,7 +68,7 @@ following the guidance below, users should be able to:
 
 By replicating the method proposed in the manuscript, we aim to
 demonstrate that the novel M&V approach can reach a conclusion faster
-than the standards requirements and provide a robust uncertainty
+than the conventional method and provide a robust uncertainty
 quantification. Additionally, by evaluating savings estimations under
 various common scenarios, we showcase the reliability of this new method
 in overcoming the limitations of conventional approaches (e.g. the
@@ -141,36 +141,37 @@ HVAC energy saved by this control intervention. The overall M&V protocol
 regarding sampling ratio, carryover effect, blocking design and stopping
 criteria remain the same as the manuscript. To replicate the analysis,
 we also fitted a time-of-week and temperature model and normalized the
-savings on a typical meterological weather file. Additionally for
-demonstration clarity, when comparing the novel randomized method with
-the conventional method, we used the average treatment effect (ATE) by
-calculating the mean difference between baseline measurements and
-intervention measurements to estimate the energy-saved by the control
-algorithm (and normalize using the mean of the baseline measurements to
-obtain fractional savings).
+savings using a typical meterological year weather file for the same
+location. We compared the randomized method with the conventional method
+using the average treatment effect (ATE) by calculating the mean
+difference between baseline samples and intervention samples to estimate
+the energy-saved by the control algorithm. For both the TMY-normalized,
+and actual-weather savings, we also represent these as fractional
+savings (or percent savings) by normalizing using the mean of the
+baseline measurements.
 
 # Use case measurement dataset
 
 For this demonstration, we simply create a hypothetical baseline and
-intervention measurement set by considering using a linear function
-including outdoor temperature ($temp$), peak and off-peak hour indicator
+intervention measurement set by using a linear function including
+outdoor temperature ($temp$), peak and off-peak hour indicator
 ($\delta_{peak}$, $\delta_{off-peak}$) as independent variables:
 
 $$
 Energy = \beta_0 + \beta_1*temp + \beta_2 * \delta_{peak} + \beta_3 * \delta_{off-peak} + \epsilon
 $$
 
-We apply that to two years of measured weather data. The $\epsilon$ term
-accounts for random noise sampled from a normal distribution
-$N(0, 10^2)$. The created measurement set for baseline and intervention
-controls is shown in figure \@ref(fig:plotdata). If the analyst follows
-the conventional M&V method described in ASHRAE Guideline 14 (G14) or
-the International Performance Measurement and Verification Protocol
-(IPMVP), then only baseline measurements are measurable/observable
-during the pre-retrofit period and only intervention measurements are
-measurable during the post-retrofit period. In other words, the control
-strategy switches between baseline and intervention one time in the
-entire study period.
+We apply that to two years of measured, actual weather data in Chicago,
+USA. The $\epsilon$ term accounts for random noise sampled from a normal
+distribution $N(0, 10^2)$. The created measurement set for baseline and
+intervention controls is shown in figure \@ref(fig:plotdata). If the
+analyst follows the conventional M&V method described in ASHRAE
+Guideline 14 (G14) or the International Performance Measurement and
+Verification Protocol (IPMVP), then only baseline measurements are
+measurable/observable during the pre-retrofit period and only
+intervention measurements are measurable during the post-retrofit
+period. In other words, the control strategy switches between baseline
+and intervention one time in the entire study period.
 
 ```{r readfiles, message=FALSE, warning=FALSE}
 
@@ -292,7 +293,7 @@ built-in function '*sample()'* in R package *'base'* to randomly select
 at each sampling interval which strategy to implement. The advantage of
 this function is easy to implement for a short test run (e.g. 1 week) on
 a single unit. But it is not recommended for more complicated tests, and
-we will address the limitations below.
+we will address these limitations below.
 
 ```{r simple_schedule, include=TRUE, message=FALSE}
 # Define strategies and number of days
@@ -315,9 +316,9 @@ statistical power of unbiased randomization and balanced sample size.
 This means to accurately estimate the energy-saving effect of the
 intervention control strategy, we should design an unbiased
 randomization that has an equal amount of measurements for each level of
-confounding variables. Therefore, a simple complete randomization can
-still be biased, for instance, getting a poor randomization where the
-baseline, by chance, is sampled more often on weekends and vice versa.
+the confounding variables. Therefore, a simple randomization can still
+be biased, for instance, by yielding a poor randomization where the
+baseline - by chance - is sampled more often on weekends and vice versa.
 This can be avoided by designing a block randomization, which is a type
 of experimental design that first divides the testing units into blocks
 and then randomly assigns which strategy to implement for each unit
@@ -329,15 +330,16 @@ affected by occupancy, time, and outdoor weather conditions. If the
 control service company wishes to bill the customer based on the savings
 solely from the control retrofit itself, the M&V analyst should
 decompose the measured energy savings and adjust for the influence from
-differences in weather. For example in this document, we assume two
-strategies are being compared over a blocking period of 12 weeks.
+differences in weather.
 
-To do block design, we use a function in R called *\'blocks()\'* from
-the *\'blocksdesign\'* package. We further bonded other functions and
-inputs to make the package more versatile and one example is shown
-below. Once successfully called, the function will return a list
-consisting of schedule output and schedule summaries. The detailed
-schedule can be viewed by calling the `schedule` key name.
+For example in this document, we assume two strategies are being
+compared over a blocking period of 12 weeks. To do block design, we use
+a function in R called *'blocks()'* from the *'blocksdesign'* package.
+We further bonded other functions and inputs to make the package more
+versatile (see code in .rmd file). Once successfully called, the
+function will return a list consisting of schedule output and schedule
+summaries. The detailed schedule can be viewed by calling the `schedule`
+key name.
 
 ```{r block, include=TRUE, message=FALSE}
 source(paste0(function_path, "blocking.R")) # block design schedule generation function
@@ -359,7 +361,7 @@ call three built-in summary table outputs:
 1.  Weekday summary: calculates how many days are sampled for each
     season weekday and strategy combination.
 2.  Consecutive days summary: calculates how many consecutive days are
-    sampled for each strategy
+    sampled for each strategy.
 
 ```{r summaryweek}
 kable(head(schedule$weekday_summary))
@@ -927,84 +929,84 @@ As figure \@ref(fig:sprtresults) indicates, the running average of power
 consumption in subplot a) shows more savings from the intervention
 strategy during warmer outdoor weather in general. This also corresponds
 to the sequential probability ratio test (SPRT) results shown in subplot
-b). The energy savings as the difference between baseline measurements
-and intervention measurements were estimated over actual weather
-encountered during the study. Subplot b) also shows a minimal detectable
-saving was observed early in week 12. However, subplot c) indicates that
-outdoor weather has not reached the 80% threshold range calculated with
-reference to the typical meteorological year (TMY) weather file, we need
-to continue the M&V. At week 16, the accumulated temperature measured in
-sampled baseline days covered 80% range and at week 24, sampled
-intervention days satisfied the criterion. Therefore, we report a 9 kW
-savings at the end of this blocking period (i.e. week 24). If the
-analyst decides to continue sampling, the plot further shows the
-uncertainty associated with saving estimation further decreased
+b). The energy savings as the difference between baseline samples and
+intervention samples were estimated over actual weather encountered
+during the study. Subplot b) also shows a minimal detectable saving was
+observed early in week 12. It also highlights how consistently close the
+estimated interventon effect is to the true effect (without the effect
+of noise) throughout the study period. However, subplot c) indicates
+that outdoor weather has not reached the 80% threshold range calculated
+with reference to the typical meteorological year (TMY) weather file, we
+need to continue the M&V process in order to be able to normalize to a
+full range of weather conditions. At week 16, the accumulated
+temperature measured in sampled baseline days covered 80% range and at
+week 24, sampled intervention days satisfied the criterion. Therefore,
+we report a 9 kW savings at the end of this blocking period (i.e. week
+24). If the analyst decides to continue sampling, the plot further shows
+the uncertainty associated with saving estimation further decreased
 throughout the remaining 24 weeks. Subplot d) plots the sequentially
 estimated normalized savings on the TMY weather conditions and outlines
 the check-point for satisfying each critical stopping criterion. It
 shows although the saving was detected early by the statistical test at
 week 12, the normalized annual estimation still largely fluctuates at
 the point. After covered sufficient weather conditions, the annualized
-savings stabilize at 17%. If this is a real project, and the analyst
-follows the steps outlined in the standards, week 24 is merely the
-mid-point of baseline collection assuming no interruptions or delays and
-he/she has to wait for another one year and half to estimate savings. In
-addition, we also plotted the true savings obtained from the created
-measurement set over time in subplot b) and normalized true savings on
-the same TMY file in subplot d). The two plotted reference lines
-validate that our M&V estimation accurately follows the intervention
-effect.
-
-# Comparison to conventional M&V method
+savings stabilize at 17% which corresponds to the true TMY normalized
+savings as shown in subplot d).
 
 Considering now the scenario where the analyst had applied conventional
 M&V following ASHRAE Guideline 14 or IPMVP, it would take 2 years to
-reach the same result. Even if the analyst performed traditional M&V
-using a 6 month baseline and 6 month intervention period (1 year
-total), the result would be less accurate and still take longer than the
-method proposed above. Attempting to perform traditional M&V using just
-24 weeks would yield nonsensical data as the baseline and intervention
-periods would span very different weather data ranges. Yet this
-randomized M&V method was able to achieve this.
+reach the same result (12 month baseline, 12 month intervention). The
+point at which the new method was able to accurately estimate TMY
+normalized savings was week 24. Using conventional M&V methods, this
+would merely be the mid-point of baseline collection assuming no
+interruptions or delays and they would need to wait for another one year
+and half to estimate weather normalized savings. Even if the analyst
+performed conventional M&V using a 6 month baseline and 6 month
+intervention period (1 year total), the result would be less accurate
+and still take longer than the method proposed above. Attempting to
+perform conventional M&V using less than that (e.g., 24 weeks) would
+yield nonsensical data as the baseline and intervention periods would
+span very different weather data ranges. Yet this randomized M&V method
+was able to achieve a valid, robust result in this time.
 
 ## Scenario A: A discrete non-routine event
 
 One common and typical non-routine event in an energy-saving M&V project
 is a change in occupancy, or a substantial change in occupant behavior.
 This is because occupancy has a substantial influence on building energy
-consumption but is not related to the purpose of testing the
-intervention control. In reality, it is unusal to have occupancy
-measurements (compared to other independent variables such as outdoor
-temperature and therefore) when a analyst fits a regression model (e.g.
-TOWT), thus, the analyst normally assumes that occupancy remains
-unchanged throughout the study. ASHRAE G14 and IPMVP only require the
-analyst to check for the coefficient of the variation of the root mean
-square error (CVRMSE) and normalized mean square error (NMSE) of a
-fitted baseline model. Thus, if occupancy changes after the retrofit
-implementation, the analyst can still obtain an 'accurate' baseline
-model with qualified CV(RMSE) but it is biased due to the unrelated
-change event being overlooked. The novel M&V method, on the other hand,
-resolves this by sampling randomly and frequently throughout the full
-distribution of occupancy over the full study period.
+consumption but it is typically not closely related to intervention. In
+reality, it is very rare to have occupancy measurements (compared to
+other independent variables such as outdoor temperature and therefore)
+when a analyst fits a regression model (e.g. TOWT), thus, the analyst
+normally must assume that occupancy remains unchanged throughout the
+study. ASHRAE G14 and IPMVP only require the analyst to check for the
+coefficient of the variation of the root mean square error (CVRMSE) and
+normalized mean square error (NMSE) of a fitted baseline model. Thus, if
+occupancy changes after the retrofit implementation, the analyst can
+still obtain an 'accurate' baseline model with qualified CV(RMSE) but it
+is biased due to the unrelated change event being overlooked. The novel
+M&V method, on the other hand, resolves this by sampling randomly and
+frequently throughout the full distribution of occupancy over the full
+study period, and thus the results are robust to the change in
+occupancy.
 
-Consider a scenario (Scenario A), where one tenant in a high rise office
+Consider a scenario (Scenario A), where a tenant in a high rise office
 building moves out during the M&V study period, vacating one floor of
 the building. We expect the impact of non-routine events such as these
 to be balanced in sampled baseline days and intervention days if we
 sample randomly with equal probability. This means if occupancy is
 notably different over say, a 4 week period, the randomized M&V will
 sample approximately 2 weeks with baseline strategy and 2 weeks with
-intervention strategy. Therefore, the energy savings can still represent
-the intervention's true effect. Under conventional M&V, either the
-baseline or the intervention estimate will be affected by this
-difference in occupancy.
-
-To illustrate one example of this scenario, we modeled a simplified
-situation where the 12-month baseline occurs under stable occupancy, and
-after the retrofit implementation, the energy consumption decreased by
-10 kW for each metered interval from April to September because of
-decreased occupancy (i.e. tenants moving out leaving one floor vacant)
-and that the analyst was not aware of this change in occupancy.
+intervention strategy. Therefore, the calculated energy savings can
+still represent the intervention's true effect. Under conventional M&V,
+either the baseline or the intervention estimate will be affected by
+this difference in occupancy. To illustrate one example of this
+scenario, we modeled a situation where the 12-month baseline occurs
+under stable occupancy, and after the retrofit implementation, the
+energy consumption decreased by 10 kW for each metered interval from
+April to September because of decreased occupancy (i.e. tenants moving
+out leaving one floor vacant) and that the analyst was not aware of this
+change in occupancy.
 
 ```{r, SA}
 
@@ -1168,7 +1170,7 @@ collected metered data as the baseline. In other words, the model is
 only valid for stable occupancy. Then, during the intervention period,
 an unexpected change in occupancy occurs, which makes the baseline model
 no longer representative, but without a reasonable means of adjusting
-it. Here, traditional M&V would overestimate the savings by the
+it. Here, conventional M&V would overestimate the savings by the
 intervention.
 
 Instead, if the analyst follows the steps of the novel randomized M&V
@@ -1177,8 +1179,8 @@ strategies in the BAS and switch back and forth between them depending
 on a pre-determined, randomly selected schedule. Figure
 \@ref(fig:SArand) shows that even if the M&V test period spans the
 period during which occupancy changes, and the analyst has no prior
-knowledge about when and how long the occupancy has changed,  this
-method will still find a reasonable estimate of the true effect of the
+knowledge about when and how long the occupancy has changed, this method
+will still find a reasonable estimate of the true effect of the
 intervention. This is because it is randomly and frequently sampling
 over the full distribution of occupancy experienced by the building.
 
@@ -1241,7 +1243,7 @@ df_FS %>%
   geom_col(aes(x = category, y = values), 
            alpha = 0.6, 
            position = "identity") +
-  geom_text(aes(x = category, y = values, label = paste0(round(values, digits = 0), " kW")), 
+  geom_text(aes(x = category, y = values, label = paste0(round(values, digits = 1), " kW")), 
             position = position_nudge(y = -0.5),
             size = 4) +
   scale_y_continuous(expand = c(0, 0), 
@@ -1256,18 +1258,20 @@ df_FS %>%
 
 ## Scenario B: Continuous baseline change due to HVAC component degradation
 
-A baseline can also change continuously over time, which makes it even
-harder to detect. One example is filter being gradually loaded in a AHU,
-increasing fan power due to increased static pressure to overcome the
-increased resistance of air passing through the filter. In this
-scenario, if the building manager changes the air filter before starting
-the M&V and the analyst chooses to use the conventional pre-/post-type
-analysis, the energy measured 12 months later in the post-retrofit
-period should correspond to a higher baseline due to increased fan
-energy as the particle accumulates in the filter. Here, the conventional
-M&V method will underestimate the intervention energy-saving effect. If
-the analyst chooses to use the novel random sampling M&V, the results
-will be far more robust to this issue.
+Building performance can also change intermittently or continuously over
+time, which can be more difficult to detect. For example, gradually
+replacing older, lower performance lights as they fail with LEDs.
+Another example is a filter becoming increasingly clogged in an air
+handling unit, increasing fan power due to increased static pressure to
+overcome the increased resistance of air passing through the filter. In
+this scenario, if the building manager changes the air filter before
+starting the M&V and the analyst chooses to use the conventional
+pre-/post-type analysis, the energy measured 12 months later in the
+post-retrofit period should correspond to a higher baseline due to
+increased fan energy as the particle accumulates in the filter. Here,
+the conventional M&V method will underestimate the intervention
+energy-saving effect. If the analyst chooses to use the novel random
+sampling M&V, the results will be far more robust to this issue.
 
 In this scenario, we simulated a situation where the fan power gradually
 increased due to accumulated particles in the filter. We assume the fan
@@ -1275,9 +1279,7 @@ power accounts for 25% of the HVAC electricity consumption and due to
 clogging, system static pressure increases gradually by 50% over the
 course of the 2 year study period. The relationship between fan power
 and static pressure can be roughly estimated as $P \sim\ Q^3*\Delta P$,
-which means the fan power would also increase from 100% to 150%. We
-demonstrate such increase is omitted by the conventional method in the
-post-retrofit period where only the control intervention is measured.
+which means the fan power would also increase from 100% to 150%.
 
 ```{r SB}
 # Generate schedule for the post-intervention period
@@ -1397,7 +1399,7 @@ p2 <- ggplot() +
              size = 0.5, 
              alpha = 0.3) +
   geom_smooth(data = baseline_results, 
-              aes(x = datetime, y = towt, color = "Projected baseline\n(no change)")) +
+              aes(x = datetime, y = towt, color = "Projected baseline\n(no filter loading change)")) +
 
   geom_point(data = df_base_alt %>% 
                filter(datetime >= as.Date("2022-01-01")) %>% 
@@ -1441,21 +1443,17 @@ p1 + p2 +
         plot.tag = element_text(color="black"))
 ```
 
-Similarly, the above figure \@ref(fig:SBdata) shows both metered energy
-consumption and modeled baseline for a 2-year M&V project in this
-scenario. The figure shows if using the conventional method, the analyst
-would start a 12-month baseline and fit a regression model using the
-collected measurements. If the static pressure increase covers the
-course of the study period, there is a chance that the fitted model may
-indirectly account for the change in baseline in this case. However,
-subplot b) shows that the projected modeling results still
-under-estimate the fan energy increase compared to correctly adjusted
-baseline in the post-retrofit period. Normally the fan energy increase
-can be detected using sensors connected to the AHU, but it is outside
-the scope for a whole building metered energy consumption M&V. However,
-if the analyst choose to apply the random switching method shown in
-figure \@ref(fig:SBrand), the energy increase can be measured any time
-throughout the study period.
+The above figure \@ref(fig:SBdata) shows both metered energy consumption
+and modeled baseline for a 2-year M&V project in this scenario. The
+figure shows that if using the conventional method, the analyst would
+start a 12-month baseline and fit a regression model using the collected
+measurements. Subplot b) shows that the projected baseline model will
+under-estimate the fan energy increase compared to a correctly adjusted
+baseline in the post-retrofit period. This will bias the energy savings
+estimate associated with the intervention, yielding a lower energy
+savings. However, if the analyst chose to apply the random switching
+method shown in figure \@ref(fig:SBrand), it will still accurately
+estimate the intervention effect.
 
 ```{r SBrand, fig.cap="Averaged energy measurements at sampling interval (daily) using novel M&V method", fig.width=8, fig.height=4}
 # make daily totals
@@ -1493,11 +1491,11 @@ df_daily %>%
         axis.text = element_text(size = 12))
 ```
 
-As a result, figure \@ref(fig:SBresults) implies that the conventional
-M&V significantly underestimates the intervention energy-saving effect
-due to a lack of baseline measurements in the post-retrofit duration.
-Additionally as expected, when using the randomized M&V, savings are
-estimated much more accurately.
+Figure \@ref(fig:SBresults) implies that conventional M&V significantly
+underestimates the intervention energy-saving effect due to a lack of
+baseline measurements in the post-retrofit duration. Additionally as
+expected, when using the randomized M&V, savings are estimated much more
+accurately.
 
 ```{r SBresults, fig.cap="Saving estimation comparison between true savings and the two methods (conventional M&V method: no prior knowledge of filter clogging and does not measure baseline,  and the novel randomized M&V method: no prior knowledge of filter clogging but measures updated baseline).", fig.height=4, fig.width=8}
 # True M&V savings
@@ -1524,7 +1522,7 @@ df_FS %>%
   geom_col(aes(x = category, y = values), 
            alpha = 0.6, 
            position = "identity") +
-  geom_text(aes(x = category, y = values, label = paste0(round(values, digits = 0), " kW")), 
+  geom_text(aes(x = category, y = values, label = paste0(round(values, digits = 1), " kW")), 
             position = position_nudge(y = -0.5),
             size = 4) +
   scale_y_continuous(expand = c(0, 0), 
